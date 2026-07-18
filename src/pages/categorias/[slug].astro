@@ -22,7 +22,7 @@ const productsRes = await db.execute({
 const products = productsRes.rows as unknown as Product[];
 ---
 
-<BaseLayout title={`${category.name} — RemaTech`} description={category.description}>
+<BaseLayout title={`${category.name} — NoteStore`} description={category.description}>
   <section class="relative overflow-hidden bg-neutral-950">
     <img
       src={category.image_url}

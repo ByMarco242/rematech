@@ -74,7 +74,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   }
 
   const lines = [
-    `¡Hola RemaTech! 👋 Quiero hacer este pedido (Pedido #${orderId}):`,
+    `¡Hola NoteStore! 👋 Quiero hacer este pedido (Pedido #${orderId}):`,
     '',
     ...items.map((i) => `• ${i.name} x${i.qty} — ${formatPrice(i.price * i.qty)}`),
     '',

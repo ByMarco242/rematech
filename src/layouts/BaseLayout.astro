@@ -9,7 +9,7 @@ interface Props {
 }
 
 const {
-  title = 'RemaTech — Tienda de Notebooks',
+  title = 'NoteStore — Tienda de Notebooks',
   description = 'Las mejores notebooks del mercado: gaming, ultrabooks, empresariales y más. Envíos a todo el país.',
 } = Astro.props;
 ---
@@ -33,7 +33,7 @@ const {
     <Navbar />
 
     <script is:inline>
-      window.RemaTechCart = {
+      window.NoteStoreCart = {
         get() {
           try {
             return JSON.parse(localStorage.getItem('cart') || '[]');
@@ -98,14 +98,14 @@ const {
         if (!btn) return;
         e.preventDefault();
         const product = JSON.parse(btn.getAttribute('data-add-to-cart'));
-        window.RemaTechCart.add(product);
+        window.NoteStoreCart.add(product);
         btn.classList.remove('btn-pop');
         void btn.offsetWidth;
         btn.classList.add('btn-pop');
         window.showToast('Agregado al carrito ✓');
       });
 
-      window.RemaTechCart.updateBadge();
+      window.NoteStoreCart.updateBadge();
     </script>
 
     <slot />

@@ -3,7 +3,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 const user = Astro.locals.user;
 ---
 
-<BaseLayout title="Mi carrito — RemaTech">
+<BaseLayout title="Mi carrito — NoteStore">
   <div class="mx-auto max-w-4xl px-4 py-12 sm:px-6">
     <h1 class="text-3xl font-bold tracking-tight">Mi carrito</h1>
 
@@ -82,7 +82,7 @@ const user = Astro.locals.user;
     });
 
     function render() {
-      const cart = window.RemaTechCart.get();
+      const cart = window.NoteStoreCart.get();
       const empty = document.getElementById('cart-empty');
       const content = document.getElementById('cart-content');
       const list = document.getElementById('cart-items');
@@ -105,16 +105,16 @@ const user = Astro.locals.user;
         el('qty').textContent = item.qty;
         el('subtotal').textContent = fmt.format(item.price * item.qty);
         el('minus').addEventListener('click', () => {
-          if (item.qty <= 1) window.RemaTechCart.remove(item.id);
-          else window.RemaTechCart.setQty(item.id, item.qty - 1);
+          if (item.qty <= 1) window.NoteStoreCart.remove(item.id);
+          else window.NoteStoreCart.setQty(item.id, item.qty - 1);
           render();
         });
         el('plus').addEventListener('click', () => {
-          window.RemaTechCart.setQty(item.id, item.qty + 1);
+          window.NoteStoreCart.setQty(item.id, item.qty + 1);
           render();
         });
         el('remove').addEventListener('click', () => {
-          window.RemaTechCart.remove(item.id);
+          window.NoteStoreCart.remove(item.id);
           render();
         });
         list.appendChild(node);
@@ -128,7 +128,7 @@ const user = Astro.locals.user;
         window.location.href = '/login?next=/carrito';
         return;
       }
-      const items = window.RemaTechCart.get().map((i) => ({ id: i.id, qty: i.qty }));
+      const items = window.NoteStoreCart.get().map((i) => ({ id: i.id, qty: i.qty }));
       if (items.length === 0) return;
 
       checkoutBtn.disabled = true;
@@ -142,7 +142,7 @@ const user = Astro.locals.user;
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'No se pudo registrar el pedido.');
 
-        window.RemaTechCart.save([]);
+        window.NoteStoreCart.save([]);
         render();
         document.getElementById('cart-empty').classList.add('hidden');
         const success = document.getElementById('order-success');

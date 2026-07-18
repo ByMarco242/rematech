@@ -367,7 +367,7 @@ async function main() {
   await db.execute("UPDATE users SET role = 'admin' WHERE is_admin = 1 AND role = 'cliente'");
 
   // Admin
-  const adminEmail = process.env.ADMIN_EMAIL || 'admin@rematech.com';
+  const adminEmail = process.env.ADMIN_EMAIL || 'admin@notestore.com';
   const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
   const existingAdmin = await db.execute({
     sql: 'SELECT id FROM users WHERE email = ?',

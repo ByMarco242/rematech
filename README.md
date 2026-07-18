@@ -1,4 +1,4 @@
-# 💻 RemaTech — Tienda de Notebooks
+# 💻 NoteStore — Tienda de Notebooks
 
 E-commerce de notebooks construido con **Astro 5 (SSR)**, **Tailwind CSS 4** y **libSQL/Turso**, listo para desplegar en **Vercel**.
 
@@ -22,7 +22,7 @@ npm run dev    # http://localhost:4321
 
 **Usuario admin de ejemplo** (creado por el seed):
 
-- Email: `admin@rematech.com`
+- Email: `admin@notestore.com`
 - Contraseña: `admin123`
 
 > ⚠️ Cambiá esa contraseña antes de ir a producción. Podés definir `ADMIN_EMAIL` y `ADMIN_PASSWORD` como variables de entorno antes de ejecutar el seed.

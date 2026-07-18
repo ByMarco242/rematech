@@ -41,7 +41,7 @@ const categoriesRes = await db.execute('SELECT * FROM categories ORDER BY name')
 const categories = categoriesRes.rows as unknown as Category[];
 ---
 
-<AdminLayout title={`Editar ${product.name} — RemaTech admin`}>
+<AdminLayout title={`Editar ${product.name} — NoteStore admin`}>
   <nav class="text-sm text-neutral-500">
     <a href="/admin/productos" class="hover:text-neutral-900">← Volver a productos</a>
   </nav>
