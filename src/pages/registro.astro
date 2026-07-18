@@ -1,6 +1,6 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
-import { registerUser, createSession } from '../lib/auth';
+import { registerUser, createSession, validatePassword } from '../lib/auth';
 import { sanitizeNext } from '../lib/util';
 import { isRateLimited, recordAttempt, clientIp } from '../lib/ratelimit';
 
@@ -21,12 +21,14 @@ if (Astro.request.method === 'POST') {
 
   const ipKey = `registro-ip:${clientIp(Astro.request)}`;
 
+  const passwordError = validatePassword(password);
+
   if (!name || !email || !password) {
     error = 'Completá todos los campos.';
   } else if (!EMAIL_RE.test(email)) {
     error = 'El email no es válido.';
-  } else if (password.length < 8) {
-    error = 'La contraseña debe tener al menos 8 caracteres.';
+  } else if (passwordError) {
+    error = passwordError;
   } else if (await isRateLimited(ipKey, 10, 60)) {
     error = 'Demasiados registros desde esta conexión. Probá más tarde.';
   } else {
@@ -93,10 +95,17 @@ if (Astro.request.method === 'POST') {
             name="password"
             required
             minlength="8"
+            maxlength="100"
             autocomplete="new-password"
             class="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-sm outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
-            placeholder="Mínimo 8 caracteres"
+            placeholder="Tu contraseña"
           />
+          <ul id="pw-checks" class="mt-2 space-y-1 text-xs text-neutral-400">
+            <li data-check="len"><span class="inline-block w-4">•</span>Al menos 8 caracteres</li>
+            <li data-check="lower"><span class="inline-block w-4">•</span>Una letra minúscula</li>
+            <li data-check="upper"><span class="inline-block w-4">•</span>Una letra mayúscula</li>
+            <li data-check="num"><span class="inline-block w-4">•</span>Un número</li>
+          </ul>
         </div>
         <button
           type="submit"
@@ -107,4 +116,31 @@ if (Astro.request.method === 'POST') {
       </form>
     </div>
   </div>
+
+  <script is:inline>
+    (() => {
+      const input = document.getElementById('password');
+      const list = document.getElementById('pw-checks');
+      if (!input || !list) return;
+
+      const rules = {
+        len: (v) => v.length >= 8,
+        lower: (v) => /[a-z]/.test(v),
+        upper: (v) => /[A-Z]/.test(v),
+        num: (v) => /[0-9]/.test(v),
+      };
+
+      input.addEventListener('input', () => {
+        const value = input.value;
+        for (const [name, test] of Object.entries(rules)) {
+          const item = list.querySelector(`[data-check="${name}"]`);
+          if (!item) continue;
+          const ok = test(value);
+          item.classList.toggle('text-emerald-600', ok);
+          item.classList.toggle('text-neutral-400', !ok);
+          item.querySelector('span').textContent = ok ? '✓' : '•';
+        }
+      });
+    })();
+  </script>
 </BaseLayout>

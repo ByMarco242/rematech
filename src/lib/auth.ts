@@ -34,6 +34,19 @@ function makeSessionUser(row: Record<string, unknown>): SessionUser {
 const SESSION_COOKIE = 'session';
 const SESSION_DAYS = 30;
 
+/**
+ * Reglas de contraseña: 8-100 caracteres, con minúscula, mayúscula y número.
+ * Devuelve el mensaje de error o null si es válida.
+ */
+export function validatePassword(password: string): string | null {
+  if (password.length < 8) return 'La contraseña debe tener al menos 8 caracteres.';
+  if (password.length > 100) return 'La contraseña no puede superar los 100 caracteres.';
+  if (!/[a-z]/.test(password)) return 'La contraseña debe incluir al menos una letra minúscula.';
+  if (!/[A-Z]/.test(password)) return 'La contraseña debe incluir al menos una letra mayúscula.';
+  if (!/[0-9]/.test(password)) return 'La contraseña debe incluir al menos un número.';
+  return null;
+}
+
 function randomToken(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);

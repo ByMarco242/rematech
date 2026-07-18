@@ -7,3 +7,8 @@ local.db
 local.db-journal
 local.db-wal
 local.db-shm
+
+cred*.txt
+*.png
+*.jpg
+*.jpeg
