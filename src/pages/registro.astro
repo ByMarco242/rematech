@@ -1,9 +1,13 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { registerUser, createSession } from '../lib/auth';
+import { sanitizeNext } from '../lib/util';
+import { isRateLimited, recordAttempt, clientIp } from '../lib/ratelimit';
 
-const next = Astro.url.searchParams.get('next') || '/';
+const next = sanitizeNext(Astro.url.searchParams.get('next'));
 if (Astro.locals.user) return Astro.redirect(next);
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 let error = '';
 let name = '';
@@ -11,22 +15,28 @@ let email = '';
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
-  name = String(form.get('name') ?? '').trim();
-  email = String(form.get('email') ?? '').trim().toLowerCase();
-  const password = String(form.get('password') ?? '');
+  name = String(form.get('name') ?? '').trim().slice(0, 80);
+  email = String(form.get('email') ?? '').trim().toLowerCase().slice(0, 254);
+  const password = String(form.get('password') ?? '').slice(0, 100);
+
+  const ipKey = `registro-ip:${clientIp(Astro.request)}`;
 
   if (!name || !email || !password) {
     error = 'Completá todos los campos.';
-  } else if (password.length < 6) {
-    error = 'La contraseña debe tener al menos 6 caracteres.';
+  } else if (!EMAIL_RE.test(email)) {
+    error = 'El email no es válido.';
+  } else if (password.length < 8) {
+    error = 'La contraseña debe tener al menos 8 caracteres.';
+  } else if (await isRateLimited(ipKey, 10, 60)) {
+    error = 'Demasiados registros desde esta conexión. Probá más tarde.';
   } else {
+    await recordAttempt(ipKey);
     const result = await registerUser(name, email, password);
     if (result.error) {
       error = result.error;
     } else if (result.user) {
       await createSession(result.user.id, Astro.cookies);
-      const target = String(form.get('next') || '/');
-      return Astro.redirect(target.startsWith('/') ? target : '/');
+      return Astro.redirect(sanitizeNext(form.get('next')));
     }
   }
 }
@@ -82,10 +92,10 @@ if (Astro.request.method === 'POST') {
             type="password"
             name="password"
             required
-            minlength="6"
+            minlength="8"
             autocomplete="new-password"
             class="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-sm outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
-            placeholder="Mínimo 6 caracteres"
+            placeholder="Mínimo 8 caracteres"
           />
         </div>
         <button

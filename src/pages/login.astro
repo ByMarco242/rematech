@@ -1,8 +1,10 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { verifyLogin, createSession } from '../lib/auth';
+import { sanitizeNext } from '../lib/util';
+import { isRateLimited, recordAttempt, clearAttempts, clientIp } from '../lib/ratelimit';
 
-const next = Astro.url.searchParams.get('next') || '/';
+const next = sanitizeNext(Astro.url.searchParams.get('next'));
 if (Astro.locals.user) return Astro.redirect(next);
 
 let error = '';
@@ -10,19 +12,30 @@ let email = '';
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
-  email = String(form.get('email') ?? '').trim().toLowerCase();
-  const password = String(form.get('password') ?? '');
+  email = String(form.get('email') ?? '').trim().toLowerCase().slice(0, 254);
+  const password = String(form.get('password') ?? '').slice(0, 100);
+
+  const ip = clientIp(Astro.request);
+  const emailKey = `login:${email}`;
+  const ipKey = `login-ip:${ip}`;
 
   if (!email || !password) {
     error = 'Completá todos los campos.';
+  } else if (
+    (await isRateLimited(emailKey, 5, 15)) ||
+    (await isRateLimited(ipKey, 30, 15))
+  ) {
+    error = 'Demasiados intentos fallidos. Esperá 15 minutos y volvé a probar.';
   } else {
     const user = await verifyLogin(email, password);
     if (!user) {
+      await recordAttempt(emailKey);
+      await recordAttempt(ipKey);
       error = 'Email o contraseña incorrectos.';
     } else {
+      await clearAttempts(emailKey);
       await createSession(user.id, Astro.cookies);
-      const target = String(form.get('next') || '/');
-      return Astro.redirect(target.startsWith('/') ? target : '/');
+      return Astro.redirect(sanitizeNext(form.get('next')));
     }
   }
 }

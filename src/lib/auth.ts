@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import { createHash } from 'node:crypto';
 import type { AstroCookies } from 'astro';
 import { getDb } from './db';
 
@@ -39,6 +40,20 @@ function randomToken(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// En la base solo se guarda el hash del token: si la DB se filtra,
+// los tokens robados no sirven para secuestrar sesiones.
+function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+// Hash de relleno para igualar el tiempo de respuesta cuando el email no existe
+// (evita enumerar usuarios midiendo la latencia del login).
+let dummyHash: string | null = null;
+async function getDummyHash(): Promise<string> {
+  if (!dummyHash) dummyHash = await bcrypt.hash(randomToken(), 10);
+  return dummyHash;
+}
+
 export async function registerUser(
   name: string,
   email: string,
@@ -73,7 +88,10 @@ export async function verifyLogin(
     args: [email],
   });
   const row = res.rows[0];
-  if (!row) return null;
+  if (!row) {
+    await bcrypt.compare(password, await getDummyHash());
+    return null;
+  }
   const ok = await bcrypt.compare(password, String(row.password_hash));
   if (!ok) return null;
   return makeSessionUser(row);
@@ -85,7 +103,7 @@ export async function createSession(userId: number, cookies: AstroCookies): Prom
   const expires = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
   await db.execute({
     sql: 'INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)',
-    args: [token, userId, expires.toISOString()],
+    args: [hashToken(token), userId, expires.toISOString()],
   });
   cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
@@ -98,16 +116,17 @@ export async function createSession(userId: number, cookies: AstroCookies): Prom
 
 export async function getSessionUser(token: string): Promise<SessionUser | null> {
   const db = await getDb();
+  const hashed = hashToken(token);
   const res = await db.execute({
     sql: `SELECT u.id, u.email, u.name, u.role, s.expires_at
           FROM sessions s JOIN users u ON u.id = s.user_id
           WHERE s.token = ?`,
-    args: [token],
+    args: [hashed],
   });
   const row = res.rows[0];
   if (!row) return null;
   if (new Date(String(row.expires_at)) < new Date()) {
-    await db.execute({ sql: 'DELETE FROM sessions WHERE token = ?', args: [token] });
+    await db.execute({ sql: 'DELETE FROM sessions WHERE token = ?', args: [hashed] });
     return null;
   }
   return makeSessionUser(row);
@@ -117,7 +136,10 @@ export async function destroySession(cookies: AstroCookies): Promise<void> {
   const token = cookies.get(SESSION_COOKIE)?.value;
   if (token) {
     const db = await getDb();
-    await db.execute({ sql: 'DELETE FROM sessions WHERE token = ?', args: [token] });
+    await db.execute({
+      sql: 'DELETE FROM sessions WHERE token = ?',
+      args: [hashToken(token)],
+    });
   }
   cookies.delete(SESSION_COOKIE, { path: '/' });
 }

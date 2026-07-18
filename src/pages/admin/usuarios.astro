@@ -31,8 +31,10 @@ if (Astro.request.method === 'POST') {
 
     if (!name || !email || !password) {
       error = 'Completá todos los campos.';
-    } else if (password.length < 6) {
-      error = 'La contraseña debe tener al menos 6 caracteres.';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+      error = 'El email no es válido.';
+    } else if (password.length < 8) {
+      error = 'La contraseña debe tener al menos 8 caracteres.';
     } else {
       const result = await registerUser(name, email, password, role);
       if (result.error) {
@@ -153,7 +155,7 @@ const input =
           </div>
           <div>
             <label for="u-password" class="mb-1.5 block text-sm font-medium text-neutral-700">Contraseña *</label>
-            <input id="u-password" name="password" type="text" required minlength="6" class={input} placeholder="Mínimo 6 caracteres" />
+            <input id="u-password" name="password" type="text" required minlength="8" class={input} placeholder="Mínimo 8 caracteres" />
             <p class="mt-1 text-xs text-neutral-400">Compartila con el empleado por un canal seguro.</p>
           </div>
           <div>

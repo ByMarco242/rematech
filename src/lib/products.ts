@@ -35,19 +35,22 @@ export function parseProductForm(form: FormData): { data?: ProductInput; error?:
 
   const stock = Number(form.get('stock') ?? 0);
 
+  const text = (field: string, max: number) =>
+    String(form.get(field) ?? '').trim().slice(0, max);
+
   return {
     data: {
-      name,
-      brand: String(form.get('brand') ?? '').trim(),
-      description: String(form.get('description') ?? '').trim(),
+      name: name.slice(0, 150),
+      brand: text('brand', 60),
+      description: text('description', 4000),
       price,
       old_price: oldPrice,
-      image_url: String(form.get('image_url') ?? '').trim(),
+      image_url: text('image_url', 500),
       category_id: categoryId !== null && Number.isInteger(categoryId) ? categoryId : null,
-      cpu: String(form.get('cpu') ?? '').trim(),
-      ram: String(form.get('ram') ?? '').trim(),
-      storage: String(form.get('storage') ?? '').trim(),
-      screen: String(form.get('screen') ?? '').trim(),
+      cpu: text('cpu', 100),
+      ram: text('ram', 100),
+      storage: text('storage', 100),
+      screen: text('screen', 100),
       stock: Number.isFinite(stock) && stock > 0 ? Math.floor(stock) : 0,
       featured: form.get('featured') ? 1 : 0,
     },

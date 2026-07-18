@@ -58,10 +58,11 @@ const orders = ordersRes.rows as unknown as Order[];
 
 let itemsByOrder = new Map<number, OrderItem[]>();
 if (orders.length > 0) {
-  const ids = orders.map((o) => o.id).join(',');
-  const itemsRes = await db.execute(
-    `SELECT * FROM order_items WHERE order_id IN (${ids}) ORDER BY id`
-  );
+  const placeholders = orders.map(() => '?').join(',');
+  const itemsRes = await db.execute({
+    sql: `SELECT * FROM order_items WHERE order_id IN (${placeholders}) ORDER BY id`,
+    args: orders.map((o) => o.id),
+  });
   for (const row of itemsRes.rows as unknown as OrderItem[]) {
     const list = itemsByOrder.get(row.order_id) ?? [];
     list.push(row);
