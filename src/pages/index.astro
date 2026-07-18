@@ -1,0 +1,284 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import ProductCard from '../components/ProductCard.astro';
+import CategoryCard from '../components/CategoryCard.astro';
+import { getDb, type Product, type Category } from '../lib/db';
+import { formatPrice } from '../lib/util';
+
+const db = await getDb();
+
+const [latestRes, featuredRes, categoriesRes] = await Promise.all([
+  db.execute(
+    `SELECT p.*, c.name AS category_name, c.slug AS category_slug
+     FROM products p LEFT JOIN categories c ON c.id = p.category_id
+     ORDER BY p.created_at DESC, p.id DESC LIMIT 8`
+  ),
+  db.execute(
+    `SELECT p.*, c.name AS category_name, c.slug AS category_slug
+     FROM products p LEFT JOIN categories c ON c.id = p.category_id
+     WHERE p.featured = 1 ORDER BY p.created_at DESC LIMIT 6`
+  ),
+  db.execute(
+    `SELECT c.*, COUNT(p.id) AS product_count
+     FROM categories c LEFT JOIN products p ON p.category_id = c.id
+     GROUP BY c.id ORDER BY c.name`
+  ),
+]);
+
+const latest = latestRes.rows as unknown as Product[];
+const featured = featuredRes.rows as unknown as Product[];
+const heroProducts = featured.length > 0 ? featured : latest.slice(0, 3);
+const categories = categoriesRes.rows as unknown as (Category & { product_count: number })[];
+---
+
+<BaseLayout>
+  <!-- Hero -->
+  <section class="relative overflow-hidden bg-neutral-950 text-white">
+    <div class="absolute -top-40 -left-40 size-96 rounded-full bg-white/10 blur-[120px]"></div>
+    <div class="absolute -right-40 -bottom-40 size-96 rounded-full bg-white/5 blur-[120px]"></div>
+
+    <div class="relative mx-auto grid max-w-7xl items-center gap-12 px-4 py-20 sm:px-6 lg:grid-cols-2 lg:py-28">
+      <div>
+        <p class="animate-fade-up inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-sm font-medium text-neutral-300">
+          <span class="size-1.5 animate-pulse rounded-full bg-white"></span>
+          Nuevos modelos disponibles
+        </p>
+        <h1 class="animate-fade-up anim-delay-1 mt-6 text-4xl font-extrabold tracking-tight text-balance sm:text-5xl lg:text-6xl">
+          La notebook perfecta para
+          <span class="bg-gradient-to-r from-neutral-100 to-neutral-500 bg-clip-text text-transparent">cada momento</span>
+        </h1>
+        <p class="animate-fade-up anim-delay-2 mt-6 max-w-lg text-lg leading-relaxed text-neutral-400">
+          Gaming, trabajo, estudio o creatividad. Encontrá tu próxima notebook entre
+          las mejores marcas del mercado con garantía oficial.
+        </p>
+        <div class="animate-fade-up anim-delay-3 mt-8 flex flex-wrap gap-3">
+          <a
+            href="/productos"
+            class="rounded-full bg-white px-7 py-3 font-semibold text-neutral-900 transition-transform hover:scale-105"
+          >
+            Ver catálogo
+          </a>
+          <a
+            href="#categorias"
+            class="rounded-full border border-neutral-700 px-7 py-3 font-semibold text-neutral-200 transition-colors hover:border-neutral-500 hover:bg-neutral-800/50"
+          >
+            Explorar categorías
+          </a>
+        </div>
+        <dl class="animate-fade-up anim-delay-4 mt-12 grid max-w-md grid-cols-3 gap-6 border-t border-neutral-800 pt-8">
+          <div>
+            <dt class="text-2xl font-bold">+50</dt>
+            <dd class="text-sm text-neutral-500">Modelos</dd>
+          </div>
+          <div>
+            <dt class="text-2xl font-bold">24h</dt>
+            <dd class="text-sm text-neutral-500">Envío express</dd>
+          </div>
+          <div>
+            <dt class="text-2xl font-bold">12</dt>
+            <dd class="text-sm text-neutral-500">Cuotas sin interés</dd>
+          </div>
+        </dl>
+      </div>
+
+      {heroProducts.length > 0 && (
+        <div id="hero-carousel" class="animate-hero-image group relative mx-auto w-full max-w-lg">
+          <div class="absolute inset-0 rotate-3 rounded-3xl bg-gradient-to-br from-neutral-300 to-neutral-600 opacity-60 blur-sm transition-transform group-hover:rotate-6"></div>
+          <div class="relative overflow-hidden rounded-3xl border border-neutral-800 bg-neutral-900 shadow-2xl">
+            <div
+              id="hero-track"
+              class="flex transition-transform duration-700 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)]"
+            >
+              {heroProducts.map((p) => (
+                <a href={`/productos/${p.slug}`} class="w-full shrink-0">
+                  <img src={p.image_url} alt={p.name} class="aspect-[4/3] w-full object-cover" />
+                  <div class="flex items-center justify-between gap-4 p-5">
+                    <div class="min-w-0">
+                      <p class="text-xs font-medium tracking-wide text-neutral-400 uppercase">Destacado</p>
+                      <p class="truncate font-semibold text-white">{p.name}</p>
+                    </div>
+                    <p class="text-xl font-bold whitespace-nowrap text-white">{formatPrice(p.price)}</p>
+                  </div>
+                </a>
+              ))}
+            </div>
+
+            {heroProducts.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  id="hero-prev"
+                  aria-label="Producto anterior"
+                  class="absolute top-[38%] left-3 flex size-9 cursor-pointer items-center justify-center rounded-full bg-neutral-950/50 text-white opacity-0 backdrop-blur-sm transition-all duration-300 group-hover:opacity-100 hover:bg-neutral-950/80"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="size-4"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+                <button
+                  type="button"
+                  id="hero-next"
+                  aria-label="Producto siguiente"
+                  class="absolute top-[38%] right-3 flex size-9 cursor-pointer items-center justify-center rounded-full bg-neutral-950/50 text-white opacity-0 backdrop-blur-sm transition-all duration-300 group-hover:opacity-100 hover:bg-neutral-950/80"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="size-4"><path d="m9 18 6-6-6-6"/></svg>
+                </button>
+
+                <div class="absolute top-4 right-4 flex items-center gap-1.5 rounded-full bg-neutral-950/40 px-2.5 py-1.5 backdrop-blur-sm">
+                  {heroProducts.map((_, i) => (
+                    <button
+                      type="button"
+                      data-hero-dot
+                      aria-label={`Ir al producto ${i + 1}`}
+                      class:list={[
+                        'size-2 cursor-pointer rounded-full transition-all duration-300',
+                        i === 0 ? 'w-5 bg-white' : 'bg-white/40 hover:bg-white/70',
+                      ]}
+                    ></button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  </section>
+
+  <!-- Categorías -->
+  <section id="categorias" class="mx-auto max-w-7xl scroll-mt-20 px-4 py-20 sm:px-6">
+    <div class="flex items-end justify-between gap-4" data-reveal>
+      <div>
+        <h2 class="text-3xl font-bold tracking-tight">Explorá por categoría</h2>
+        <p class="mt-2 text-neutral-500">Encontrá la notebook ideal según tu uso.</p>
+      </div>
+    </div>
+    {categories.length === 0 ? (
+      <p class="mt-10 rounded-2xl border border-dashed border-neutral-300 p-10 text-center text-neutral-500">
+        Todavía no hay categorías cargadas. Ejecutá <code class="rounded bg-neutral-100 px-1.5 py-0.5">npm run seed</code> para cargar datos de ejemplo.
+      </p>
+    ) : (
+      <div class="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3" data-reveal-group>
+        {categories.map((c) => (
+          <CategoryCard category={c} />
+        ))}
+      </div>
+    )}
+  </section>
+
+  <!-- Novedades -->
+  <section id="novedades" class="scroll-mt-20 bg-white py-20">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6">
+      <div class="flex items-end justify-between gap-4" data-reveal>
+        <div>
+          <h2 class="text-3xl font-bold tracking-tight">Novedades</h2>
+          <p class="mt-2 text-neutral-500">Los últimos modelos que llegaron a la tienda.</p>
+        </div>
+        <a
+          href="/productos"
+          class="hidden items-center gap-1 rounded-full border border-neutral-200 px-5 py-2 text-sm font-semibold text-neutral-700 transition-colors hover:bg-neutral-50 sm:inline-flex"
+        >
+          Ver todo
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-4"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+        </a>
+      </div>
+      {latest.length === 0 ? (
+        <p class="mt-10 rounded-2xl border border-dashed border-neutral-300 p-10 text-center text-neutral-500">
+          Todavía no hay productos cargados.
+        </p>
+      ) : (
+        <div class="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4" data-reveal-group>
+          {latest.map((p, i) => (
+            <ProductCard product={p} badge={i < 3 ? 'Nuevo' : undefined} />
+          ))}
+        </div>
+      )}
+    </div>
+  </section>
+
+  <!-- Beneficios -->
+  <section class="mx-auto max-w-7xl px-4 py-20 sm:px-6">
+    <div class="grid gap-5 md:grid-cols-3" data-reveal-group>
+      {
+        [
+          {
+            title: 'Envío gratis',
+            desc: 'En compras superiores a Gs. 3.000.000. Recibilo en 24/48hs en todo el país.',
+            icon: 'M5 8h14M5 8a2 2 0 1 0 0 4h14a2 2 0 1 0 0-4M5 8l1-4h12l1 4M9 16h6',
+          },
+          {
+            title: 'Garantía oficial',
+            desc: 'Todos nuestros productos cuentan con garantía oficial de fábrica.',
+            icon: 'M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z',
+          },
+          {
+            title: 'Pagos seguros',
+            desc: 'Aceptamos todas las tarjetas y hasta 12 cuotas sin interés.',
+            icon: 'M2 10h20M2 6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z',
+          },
+        ].map((b) => (
+          <div class="rounded-2xl border border-neutral-200 bg-white p-7 shadow-sm">
+            <span class="flex size-11 items-center justify-center rounded-xl bg-neutral-100 text-neutral-900">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5.5">
+                <path d={b.icon} />
+              </svg>
+            </span>
+            <h3 class="mt-4 font-bold">{b.title}</h3>
+            <p class="mt-1.5 text-sm leading-relaxed text-neutral-500">{b.desc}</p>
+          </div>
+        ))
+      }
+    </div>
+  </section>
+
+  <script is:inline>
+    (() => {
+      const carousel = document.getElementById('hero-carousel');
+      const track = document.getElementById('hero-track');
+      if (!carousel || !track || track.children.length < 2) return;
+
+      const dots = [...carousel.querySelectorAll('[data-hero-dot]')];
+      const total = track.children.length;
+      let current = 0;
+      let timer = null;
+
+      const go = (index) => {
+        current = (index + total) % total;
+        track.style.transform = `translateX(-${current * 100}%)`;
+        dots.forEach((dot, i) => {
+          dot.classList.toggle('w-5', i === current);
+          dot.classList.toggle('bg-white', i === current);
+          dot.classList.toggle('bg-white/40', i !== current);
+        });
+      };
+
+      const stop = () => {
+        if (timer) clearInterval(timer);
+        timer = null;
+      };
+      const play = () => {
+        stop();
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        timer = setInterval(() => go(current + 1), 4500);
+      };
+
+      document.getElementById('hero-prev')?.addEventListener('click', () => { go(current - 1); play(); });
+      document.getElementById('hero-next')?.addEventListener('click', () => { go(current + 1); play(); });
+      dots.forEach((dot, i) => dot.addEventListener('click', () => { go(i); play(); }));
+
+      carousel.addEventListener('mouseenter', stop);
+      carousel.addEventListener('mouseleave', play);
+
+      let touchX = null;
+      carousel.addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; stop(); }, { passive: true });
+      carousel.addEventListener('touchend', (e) => {
+        if (touchX !== null) {
+          const dx = e.changedTouches[0].clientX - touchX;
+          if (Math.abs(dx) > 40) go(current + (dx < 0 ? 1 : -1));
+          touchX = null;
+        }
+        play();
+      }, { passive: true });
+
+      play();
+    })();
+  </script>
+</BaseLayout>

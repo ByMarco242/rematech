@@ -1,0 +1,100 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { registerUser, createSession } from '../lib/auth';
+
+const next = Astro.url.searchParams.get('next') || '/';
+if (Astro.locals.user) return Astro.redirect(next);
+
+let error = '';
+let name = '';
+let email = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  name = String(form.get('name') ?? '').trim();
+  email = String(form.get('email') ?? '').trim().toLowerCase();
+  const password = String(form.get('password') ?? '');
+
+  if (!name || !email || !password) {
+    error = 'Completá todos los campos.';
+  } else if (password.length < 6) {
+    error = 'La contraseña debe tener al menos 6 caracteres.';
+  } else {
+    const result = await registerUser(name, email, password);
+    if (result.error) {
+      error = result.error;
+    } else if (result.user) {
+      await createSession(result.user.id, Astro.cookies);
+      const target = String(form.get('next') || '/');
+      return Astro.redirect(target.startsWith('/') ? target : '/');
+    }
+  }
+}
+---
+
+<BaseLayout title="Crear cuenta — RemaTech">
+  <div class="mx-auto flex max-w-md flex-col px-4 py-16 sm:px-6">
+    <div class="rounded-3xl border border-neutral-200 bg-white p-8 shadow-sm sm:p-10">
+      <h1 class="text-2xl font-bold tracking-tight">Creá tu cuenta</h1>
+      <p class="mt-2 text-sm text-neutral-500">
+        ¿Ya tenés cuenta?
+        <a href={`/login${next !== '/' ? `?next=${encodeURIComponent(next)}` : ''}`} class="font-semibold text-neutral-900 hover:underline">
+          Ingresá
+        </a>
+      </p>
+
+      {error && (
+        <p class="mt-5 rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">{error}</p>
+      )}
+
+      <form method="POST" class="mt-6 space-y-4">
+        <input type="hidden" name="next" value={next} />
+        <div>
+          <label for="name" class="mb-1.5 block text-sm font-medium text-neutral-700">Nombre</label>
+          <input
+            id="name"
+            type="text"
+            name="name"
+            value={name}
+            required
+            autocomplete="name"
+            class="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-sm outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+            placeholder="Tu nombre"
+          />
+        </div>
+        <div>
+          <label for="email" class="mb-1.5 block text-sm font-medium text-neutral-700">Email</label>
+          <input
+            id="email"
+            type="email"
+            name="email"
+            value={email}
+            required
+            autocomplete="email"
+            class="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-sm outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+            placeholder="tu@email.com"
+          />
+        </div>
+        <div>
+          <label for="password" class="mb-1.5 block text-sm font-medium text-neutral-700">Contraseña</label>
+          <input
+            id="password"
+            type="password"
+            name="password"
+            required
+            minlength="6"
+            autocomplete="new-password"
+            class="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-sm outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+            placeholder="Mínimo 6 caracteres"
+          />
+        </div>
+        <button
+          type="submit"
+          class="w-full cursor-pointer rounded-xl bg-neutral-900 py-3 font-semibold text-white transition-colors hover:bg-neutral-700"
+        >
+          Crear cuenta
+        </button>
+      </form>
+    </div>
+  </div>
+</BaseLayout>

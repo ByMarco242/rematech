@@ -1,0 +1,203 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getDb, type Order, type OrderItem } from '../../lib/db';
+import { formatPrice } from '../../lib/util';
+
+const db = await getDb();
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const action = form.get('_action');
+  const id = Number(form.get('id'));
+
+  if (Number.isInteger(id) && (action === 'approve' || action === 'reject')) {
+    const orderRes = await db.execute({
+      sql: 'SELECT id, status FROM orders WHERE id = ?',
+      args: [id],
+    });
+    const order = orderRes.rows[0];
+
+    if (order && String(order.status) === 'pendiente') {
+      if (action === 'approve') {
+        const itemsRes = await db.execute({
+          sql: 'SELECT product_id, qty FROM order_items WHERE order_id = ?',
+          args: [id],
+        });
+        for (const item of itemsRes.rows) {
+          if (item.product_id === null) continue;
+          await db.execute({
+            sql: 'UPDATE products SET stock = MAX(stock - ?, 0) WHERE id = ?',
+            args: [Number(item.qty), Number(item.product_id)],
+          });
+        }
+        await db.execute({
+          sql: "UPDATE orders SET status = 'aprobado' WHERE id = ?",
+          args: [id],
+        });
+      } else {
+        await db.execute({
+          sql: "UPDATE orders SET status = 'rechazado' WHERE id = ?",
+          args: [id],
+        });
+      }
+    }
+  }
+  return Astro.redirect('/admin/pedidos');
+}
+
+const filter = Astro.url.searchParams.get('estado') ?? '';
+const validFilter = ['pendiente', 'aprobado', 'rechazado'].includes(filter) ? filter : '';
+
+const ordersRes = validFilter
+  ? await db.execute({
+      sql: 'SELECT * FROM orders WHERE status = ? ORDER BY id DESC',
+      args: [validFilter],
+    })
+  : await db.execute('SELECT * FROM orders ORDER BY id DESC');
+const orders = ordersRes.rows as unknown as Order[];
+
+let itemsByOrder = new Map<number, OrderItem[]>();
+if (orders.length > 0) {
+  const ids = orders.map((o) => o.id).join(',');
+  const itemsRes = await db.execute(
+    `SELECT * FROM order_items WHERE order_id IN (${ids}) ORDER BY id`
+  );
+  for (const row of itemsRes.rows as unknown as OrderItem[]) {
+    const list = itemsByOrder.get(row.order_id) ?? [];
+    list.push(row);
+    itemsByOrder.set(row.order_id, list);
+  }
+}
+
+const statusStyle: Record<string, string> = {
+  pendiente: 'bg-amber-50 text-amber-600',
+  aprobado: 'bg-emerald-50 text-emerald-600',
+  rechazado: 'bg-rose-50 text-rose-600',
+};
+
+const dateFmt = new Intl.DateTimeFormat('es-PY', {
+  dateStyle: 'short',
+  timeStyle: 'short',
+  timeZone: 'America/Asuncion',
+});
+
+function formatDate(sqlDate: string): string {
+  return dateFmt.format(new Date(sqlDate.replace(' ', 'T') + 'Z'));
+}
+
+const filters = [
+  { value: '', label: 'Todos' },
+  { value: 'pendiente', label: 'Pendientes' },
+  { value: 'aprobado', label: 'Aprobados' },
+  { value: 'rechazado', label: 'Rechazados' },
+];
+---
+
+<AdminLayout title="Pedidos — RemaTech admin">
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">Pedidos</h1>
+      <p class="mt-1 text-sm text-neutral-500">
+        Pedidos enviados por WhatsApp desde el carrito. Al aprobar uno se descuenta el stock.
+      </p>
+    </div>
+  </div>
+
+  <div class="mt-6 flex flex-wrap gap-2">
+    {filters.map((f) => (
+      <a
+        href={f.value ? `/admin/pedidos?estado=${f.value}` : '/admin/pedidos'}
+        class:list={[
+          'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+          validFilter === f.value
+            ? 'bg-neutral-900 text-white'
+            : 'border border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50',
+        ]}
+      >
+        {f.label}
+      </a>
+    ))}
+  </div>
+
+  {orders.length === 0 ? (
+    <div class="mt-8 rounded-2xl border border-dashed border-neutral-300 bg-white p-16 text-center">
+      <p class="text-lg font-semibold text-neutral-700">No hay pedidos{validFilter && ` con estado «${validFilter}»`}</p>
+      <p class="mt-1 text-sm text-neutral-500">
+        Cuando un cliente finalice su carrito por WhatsApp, el pedido va a aparecer acá.
+      </p>
+    </div>
+  ) : (
+    <div class="mt-8 space-y-5">
+      {orders.map((o) => (
+        <article class="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+          <header class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-neutral-100 bg-neutral-50/60 px-5 py-4">
+            <p class="font-bold">Pedido #{o.id}</p>
+            <span class:list={['rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize', statusStyle[o.status]]}>
+              {o.status}
+            </span>
+            <p class="text-sm text-neutral-500">{formatDate(o.created_at)}</p>
+            <div class="ml-auto text-right">
+              <p class="text-xs text-neutral-400 uppercase">Total</p>
+              <p class="font-extrabold">{formatPrice(o.total)}</p>
+            </div>
+          </header>
+
+          <div class="grid gap-5 px-5 py-4 md:grid-cols-3">
+            <div class="md:col-span-2">
+              <ul class="divide-y divide-neutral-100">
+                {(itemsByOrder.get(o.id) ?? []).map((item) => (
+                  <li class="flex items-center justify-between gap-3 py-2 text-sm">
+                    <span>
+                      {item.product_name}
+                      <span class="ml-1 rounded-md bg-neutral-100 px-1.5 py-0.5 text-xs font-semibold text-neutral-600">
+                        x{item.qty}
+                      </span>
+                    </span>
+                    <span class="font-semibold whitespace-nowrap">{formatPrice(item.price * item.qty)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div class="flex flex-col justify-between gap-4 md:border-l md:border-neutral-100 md:pl-5">
+              <div class="text-sm">
+                <p class="text-xs text-neutral-400 uppercase">Cliente</p>
+                <p class="mt-1 font-semibold">{o.customer_name}</p>
+                <p class="text-neutral-500">{o.customer_email}</p>
+              </div>
+
+              {o.status === 'pendiente' && (
+                <div class="flex gap-2">
+                  <form method="POST" class="flex-1">
+                    <input type="hidden" name="_action" value="approve" />
+                    <input type="hidden" name="id" value={o.id} />
+                    <button
+                      type="submit"
+                      class="w-full cursor-pointer rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-500"
+                    >
+                      Aprobar
+                    </button>
+                  </form>
+                  <form
+                    method="POST"
+                    class="flex-1"
+                    onsubmit={`return confirm('¿Rechazar el pedido #${o.id}?')`}
+                  >
+                    <input type="hidden" name="_action" value="reject" />
+                    <input type="hidden" name="id" value={o.id} />
+                    <button
+                      type="submit"
+                      class="w-full cursor-pointer rounded-full border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-600 transition-colors hover:bg-rose-50"
+                    >
+                      Rechazar
+                    </button>
+                  </form>
+                </div>
+              )}
+            </div>
+          </div>
+        </article>
+      ))}
+    </div>
+  )}
+</AdminLayout>

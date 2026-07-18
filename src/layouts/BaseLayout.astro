@@ -1,0 +1,155 @@
+---
+import Navbar from '../components/Navbar.astro';
+import Footer from '../components/Footer.astro';
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = 'RemaTech — Tienda de Notebooks',
+  description = 'Las mejores notebooks del mercado: gaming, ultrabooks, empresariales y más. Envíos a todo el país.',
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💻</text></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="min-h-screen bg-neutral-50 text-neutral-900 antialiased">
+    <Navbar />
+
+    <script is:inline>
+      window.RemaTechCart = {
+        get() {
+          try {
+            return JSON.parse(localStorage.getItem('cart') || '[]');
+          } catch {
+            return [];
+          }
+        },
+        save(items) {
+          localStorage.setItem('cart', JSON.stringify(items));
+          this.updateBadge();
+          const badge = document.querySelector('[data-cart-badge]');
+          if (badge && !badge.classList.contains('hidden')) {
+            badge.classList.remove('badge-pop');
+            void badge.offsetWidth;
+            badge.classList.add('badge-pop');
+          }
+        },
+        add(product) {
+          const items = this.get();
+          const found = items.find((i) => i.id === product.id);
+          if (found) found.qty += 1;
+          else items.push({ ...product, qty: 1 });
+          this.save(items);
+        },
+        remove(id) {
+          this.save(this.get().filter((i) => i.id !== id));
+        },
+        setQty(id, qty) {
+          const items = this.get();
+          const found = items.find((i) => i.id === id);
+          if (!found) return;
+          found.qty = Math.max(1, qty);
+          this.save(items);
+        },
+        count() {
+          return this.get().reduce((acc, i) => acc + i.qty, 0);
+        },
+        updateBadge() {
+          const badge = document.querySelector('[data-cart-badge]');
+          if (!badge) return;
+          const n = this.count();
+          badge.textContent = n > 99 ? '99+' : String(n);
+          badge.classList.toggle('hidden', n === 0);
+          badge.classList.toggle('flex', n > 0);
+        },
+      };
+
+      let toastTimer;
+      window.showToast = (msg) => {
+        const el = document.getElementById('toast');
+        if (!el) return;
+        el.textContent = msg;
+        el.classList.remove('opacity-0', 'translate-y-20');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          el.classList.add('opacity-0', 'translate-y-20');
+        }, 2200);
+      };
+
+      document.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-add-to-cart]');
+        if (!btn) return;
+        e.preventDefault();
+        const product = JSON.parse(btn.getAttribute('data-add-to-cart'));
+        window.RemaTechCart.add(product);
+        btn.classList.remove('btn-pop');
+        void btn.offsetWidth;
+        btn.classList.add('btn-pop');
+        window.showToast('Agregado al carrito ✓');
+      });
+
+      window.RemaTechCart.updateBadge();
+    </script>
+
+    <slot />
+    <Footer />
+
+    <div
+      id="toast"
+      class="pointer-events-none fixed bottom-6 left-1/2 z-100 -translate-x-1/2 translate-y-20 rounded-full bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white opacity-0 shadow-xl transition-all duration-300"
+    >
+    </div>
+
+    <script is:inline>
+      (() => {
+        const groups = document.querySelectorAll('[data-reveal-group]');
+        for (const group of groups) {
+          let i = 0;
+          for (const child of group.children) {
+            child.style.setProperty('--reveal-delay', `${Math.min(i++ * 90, 540)}ms`);
+          }
+        }
+
+        const targets = [
+          ...document.querySelectorAll('[data-reveal]'),
+          ...[...groups].flatMap((g) => [...g.children]),
+        ];
+
+        if (!('IntersectionObserver' in window)) {
+          targets.forEach((el) => el.classList.add('revealed'));
+          return;
+        }
+
+        const observer = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (entry.isIntersecting) {
+                entry.target.classList.add('revealed');
+                observer.unobserve(entry.target);
+              }
+            }
+          },
+          { threshold: 0.1, rootMargin: '0px 0px -40px 0px' }
+        );
+        targets.forEach((el) => observer.observe(el));
+      })();
+    </script>
+  </body>
+</html>

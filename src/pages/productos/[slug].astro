@@ -1,0 +1,129 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import ProductCard from '../../components/ProductCard.astro';
+import { getDb, type Product } from '../../lib/db';
+import { formatPrice } from '../../lib/util';
+
+const db = await getDb();
+const { slug } = Astro.params;
+
+const res = await db.execute({
+  sql: `SELECT p.*, c.name AS category_name, c.slug AS category_slug
+        FROM products p LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.slug = ?`,
+  args: [slug ?? ''],
+});
+const product = res.rows[0] as unknown as Product | undefined;
+if (!product) return Astro.redirect('/productos');
+
+const relatedRes = await db.execute({
+  sql: `SELECT p.*, c.name AS category_name, c.slug AS category_slug
+        FROM products p LEFT JOIN categories c ON c.id = p.category_id
+        WHERE p.category_id = ? AND p.id != ? ORDER BY p.created_at DESC LIMIT 4`,
+  args: [product.category_id ?? -1, product.id],
+});
+const related = relatedRes.rows as unknown as Product[];
+
+const specs = [
+  { label: 'Procesador', value: product.cpu },
+  { label: 'Memoria RAM', value: product.ram },
+  { label: 'Almacenamiento', value: product.storage },
+  { label: 'Pantalla', value: product.screen },
+].filter((s) => s.value);
+
+const onSale = product.old_price != null && product.old_price > product.price;
+
+const cartPayload = JSON.stringify({
+  id: product.id,
+  name: product.name,
+  price: product.price,
+  image: product.image_url,
+  slug: product.slug,
+});
+---
+
+<BaseLayout title={`${product.name} — RemaTech`} description={product.description.slice(0, 150)}>
+  <div class="mx-auto max-w-7xl px-4 py-12 sm:px-6">
+    <nav class="flex items-center gap-2 text-sm text-neutral-500">
+      <a href="/" class="hover:text-neutral-900">Inicio</a>
+      <span>/</span>
+      <a href="/productos" class="hover:text-neutral-900">Notebooks</a>
+      {product.category_name && (
+        <>
+          <span>/</span>
+          <a href={`/categorias/${product.category_slug}`} class="hover:text-neutral-900">
+            {product.category_name}
+          </a>
+        </>
+      )}
+    </nav>
+
+    <div class="mt-8 grid gap-10 lg:grid-cols-2">
+      <div class="animate-fade-up overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-sm">
+        <img src={product.image_url} alt={product.name} class="aspect-[4/3] w-full object-cover" />
+      </div>
+
+      <div class="animate-fade-up anim-delay-1 flex flex-col">
+        <p class="text-sm font-semibold tracking-wide text-neutral-900 uppercase">{product.brand}</p>
+        <h1 class="mt-2 text-3xl font-bold tracking-tight text-balance sm:text-4xl">{product.name}</h1>
+
+        <div class="mt-5 flex items-end gap-3">
+          <p class="text-4xl font-extrabold">{formatPrice(product.price)}</p>
+          {onSale && (
+            <>
+              <p class="pb-1 text-lg text-neutral-400 line-through">{formatPrice(product.old_price!)}</p>
+              <span class="mb-1.5 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-600">
+                -{Math.round((1 - product.price / product.old_price!) * 100)}%
+              </span>
+            </>
+          )}
+        </div>
+        <p class="mt-1 text-sm text-neutral-500">Hasta 12 cuotas sin interés</p>
+
+        <p class="mt-6 leading-relaxed text-neutral-600">{product.description}</p>
+
+        {specs.length > 0 && (
+          <dl class="mt-8 grid grid-cols-2 gap-3">
+            {specs.map((s) => (
+              <div class="rounded-xl border border-neutral-200 bg-white p-4">
+                <dt class="text-xs font-medium tracking-wide text-neutral-400 uppercase">{s.label}</dt>
+                <dd class="mt-1 text-sm font-semibold">{s.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        <div class="mt-8 flex flex-wrap items-center gap-4">
+          {product.stock > 0 ? (
+            <>
+              <button
+                type="button"
+                data-add-to-cart={cartPayload}
+                class="flex cursor-pointer items-center gap-2 rounded-full bg-neutral-900 px-8 py-3.5 font-semibold text-white transition-all hover:scale-[1.02] hover:bg-neutral-700"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>
+                Agregar al carrito
+              </button>
+              <p class="text-sm font-medium text-emerald-600">
+                ✓ En stock ({product.stock} {product.stock === 1 ? 'unidad' : 'unidades'})
+              </p>
+            </>
+          ) : (
+            <p class="rounded-full bg-neutral-100 px-6 py-3 font-semibold text-neutral-500">Sin stock por el momento</p>
+          )}
+        </div>
+      </div>
+    </div>
+
+    {related.length > 0 && (
+      <section class="mt-20">
+        <h2 class="text-2xl font-bold tracking-tight" data-reveal>También te puede interesar</h2>
+        <div class="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4" data-reveal-group>
+          {related.map((p) => (
+            <ProductCard product={p} />
+          ))}
+        </div>
+      </section>
+    )}
+  </div>
+</BaseLayout>

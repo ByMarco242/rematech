@@ -1,0 +1,163 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+const user = Astro.locals.user;
+---
+
+<BaseLayout title="Mi carrito — RemaTech">
+  <div class="mx-auto max-w-4xl px-4 py-12 sm:px-6">
+    <h1 class="text-3xl font-bold tracking-tight">Mi carrito</h1>
+
+    <div id="cart-empty" class="mt-10 hidden rounded-2xl border border-dashed border-neutral-300 p-16 text-center">
+      <p class="text-lg font-semibold text-neutral-700">Tu carrito está vacío</p>
+      <p class="mt-1 text-neutral-500">Explorá el catálogo y agregá tus notebooks favoritas.</p>
+      <a href="/productos" class="mt-5 inline-block rounded-full bg-neutral-900 px-6 py-2.5 text-sm font-semibold text-white hover:bg-neutral-700">
+        Ver notebooks
+      </a>
+    </div>
+
+    <div id="cart-content" class="mt-10 hidden">
+      <ul id="cart-items" class="space-y-4"></ul>
+
+      <div class="mt-8 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+        <div class="flex items-center justify-between text-lg">
+          <span class="font-medium text-neutral-600">Total</span>
+          <span id="cart-total" class="text-2xl font-extrabold"></span>
+        </div>
+        <button
+          id="checkout-btn"
+          type="button"
+          class="mt-5 flex w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-emerald-600 py-3.5 font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-5"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.52.149-.174.198-.298.297-.497.1-.198.05-.371-.025-.52-.074-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z"/></svg>
+          Finalizar pedido por WhatsApp
+        </button>
+        <p class="mt-3 text-center text-xs text-neutral-400">
+          Tu pedido queda registrado y se abre WhatsApp con el detalle para coordinar el pago.
+        </p>
+      </div>
+    </div>
+
+    <div id="order-success" class="mt-10 hidden rounded-2xl border border-emerald-200 bg-emerald-50 p-10 text-center">
+      <p class="text-4xl">✅</p>
+      <p id="order-success-title" class="mt-3 text-lg font-bold text-emerald-800">¡Pedido registrado!</p>
+      <p class="mt-1 text-sm text-emerald-700">
+        Si WhatsApp no se abrió automáticamente, tocá el botón para enviarnos tu pedido.
+      </p>
+      <a
+        id="order-wa-link"
+        href="#"
+        target="_blank"
+        rel="noopener"
+        class="mt-5 inline-flex items-center gap-2 rounded-full bg-emerald-600 px-7 py-3 font-semibold text-white transition-colors hover:bg-emerald-500"
+      >
+        Abrir WhatsApp
+      </a>
+    </div>
+  </div>
+
+  <template id="cart-item-template">
+    <li class="flex items-center gap-4 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm">
+      <img data-el="image" class="size-20 rounded-xl object-cover" alt="" />
+      <div class="min-w-0 flex-1">
+        <a data-el="name" class="block truncate font-semibold hover:text-neutral-500"></a>
+        <p data-el="price" class="mt-0.5 text-sm text-neutral-500"></p>
+      </div>
+      <div class="flex items-center gap-1 rounded-full border border-neutral-200 px-1">
+        <button data-el="minus" type="button" class="size-8 cursor-pointer rounded-full text-lg font-medium hover:bg-neutral-100">−</button>
+        <span data-el="qty" class="w-6 text-center text-sm font-semibold"></span>
+        <button data-el="plus" type="button" class="size-8 cursor-pointer rounded-full text-lg font-medium hover:bg-neutral-100">+</button>
+      </div>
+      <p data-el="subtotal" class="w-24 text-right font-bold"></p>
+      <button data-el="remove" type="button" class="cursor-pointer p-2 text-neutral-400 transition-colors hover:text-rose-500" aria-label="Quitar">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-4.5"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+      </button>
+    </li>
+  </template>
+
+  <script is:inline define:vars={{ loggedIn: Boolean(user) }}>
+    const fmt = new Intl.NumberFormat('es-PY', {
+      style: 'currency',
+      currency: 'PYG',
+      maximumFractionDigits: 0,
+    });
+
+    function render() {
+      const cart = window.RemaTechCart.get();
+      const empty = document.getElementById('cart-empty');
+      const content = document.getElementById('cart-content');
+      const list = document.getElementById('cart-items');
+      const tpl = document.getElementById('cart-item-template');
+
+      empty.classList.toggle('hidden', cart.length > 0);
+      content.classList.toggle('hidden', cart.length === 0);
+      list.innerHTML = '';
+
+      let total = 0;
+      for (const item of cart) {
+        total += item.price * item.qty;
+        const node = tpl.content.cloneNode(true);
+        const el = (name) => node.querySelector(`[data-el="${name}"]`);
+        el('image').src = item.image;
+        el('image').alt = item.name;
+        el('name').textContent = item.name;
+        el('name').href = `/productos/${item.slug}`;
+        el('price').textContent = fmt.format(item.price) + ' c/u';
+        el('qty').textContent = item.qty;
+        el('subtotal').textContent = fmt.format(item.price * item.qty);
+        el('minus').addEventListener('click', () => {
+          if (item.qty <= 1) window.RemaTechCart.remove(item.id);
+          else window.RemaTechCart.setQty(item.id, item.qty - 1);
+          render();
+        });
+        el('plus').addEventListener('click', () => {
+          window.RemaTechCart.setQty(item.id, item.qty + 1);
+          render();
+        });
+        el('remove').addEventListener('click', () => {
+          window.RemaTechCart.remove(item.id);
+          render();
+        });
+        list.appendChild(node);
+      }
+      document.getElementById('cart-total').textContent = fmt.format(total);
+    }
+
+    const checkoutBtn = document.getElementById('checkout-btn');
+    checkoutBtn.addEventListener('click', async () => {
+      if (!loggedIn) {
+        window.location.href = '/login?next=/carrito';
+        return;
+      }
+      const items = window.RemaTechCart.get().map((i) => ({ id: i.id, qty: i.qty }));
+      if (items.length === 0) return;
+
+      checkoutBtn.disabled = true;
+      checkoutBtn.textContent = 'Registrando pedido...';
+      try {
+        const res = await fetch('/api/pedidos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'No se pudo registrar el pedido.');
+
+        window.RemaTechCart.save([]);
+        render();
+        document.getElementById('cart-empty').classList.add('hidden');
+        const success = document.getElementById('order-success');
+        success.classList.remove('hidden');
+        document.getElementById('order-success-title').textContent =
+          `¡Pedido #${data.orderId} registrado!`;
+        document.getElementById('order-wa-link').href = data.waUrl;
+        window.open(data.waUrl, '_blank');
+      } catch (err) {
+        window.showToast(err.message);
+        checkoutBtn.disabled = false;
+        checkoutBtn.textContent = 'Finalizar pedido por WhatsApp';
+      }
+    });
+
+    render();
+  </script>
+</BaseLayout>

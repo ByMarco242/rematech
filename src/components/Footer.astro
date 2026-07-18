@@ -1,0 +1,42 @@
+---
+const year = new Date().getFullYear();
+---
+
+<footer class="mt-24 border-t border-neutral-800 bg-neutral-950 text-neutral-400">
+  <div class="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 md:grid-cols-4">
+    <div class="md:col-span-2">
+      <div class="flex items-center gap-2 font-bold text-white">
+        <span class="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-neutral-600 to-neutral-900 text-white">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-4.5"><rect width="18" height="12" x="3" y="4" rx="2" ry="2"/><line x1="2" x2="22" y1="20" y2="20"/></svg>
+        </span>
+        <span class="text-lg">Rema<span class="text-neutral-400">Tech</span></span>
+      </div>
+      <p class="mt-4 max-w-sm text-sm leading-relaxed">
+        Tu tienda de notebooks de confianza. Las mejores marcas, precios competitivos
+        y envío a todo el país.
+      </p>
+    </div>
+    <div>
+      <h3 class="text-sm font-semibold text-white">Tienda</h3>
+      <ul class="mt-4 space-y-2 text-sm">
+        <li><a href="/productos" class="transition-colors hover:text-white">Todas las notebooks</a></li>
+        <li><a href="/#categorias" class="transition-colors hover:text-white">Categorías</a></li>
+        <li><a href="/#novedades" class="transition-colors hover:text-white">Novedades</a></li>
+        <li><a href="/contacto" class="transition-colors hover:text-white">Contacto</a></li>
+      </ul>
+    </div>
+    <div>
+      <h3 class="text-sm font-semibold text-white">Cuenta</h3>
+      <ul class="mt-4 space-y-2 text-sm">
+        <li><a href="/login" class="transition-colors hover:text-white">Ingresar</a></li>
+        <li><a href="/registro" class="transition-colors hover:text-white">Crear cuenta</a></li>
+        <li><a href="/carrito" class="transition-colors hover:text-white">Mi carrito</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="border-t border-neutral-800/60">
+    <p class="mx-auto max-w-7xl px-4 py-6 text-xs sm:px-6">
+      © {year} RemaTech. Todos los derechos reservados.
+    </p>
+  </div>
+</footer>

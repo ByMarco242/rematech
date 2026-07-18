@@ -1,0 +1,116 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getDb, type Product } from '../../lib/db';
+import { formatPrice } from '../../lib/util';
+
+const db = await getDb();
+
+const [prodCount, catCount, pendingOrders, noStock, recentRes] = await Promise.all([
+  db.execute('SELECT COUNT(*) AS n FROM products'),
+  db.execute('SELECT COUNT(*) AS n FROM categories'),
+  db.execute("SELECT COUNT(*) AS n FROM orders WHERE status = 'pendiente'"),
+  db.execute('SELECT COUNT(*) AS n FROM products WHERE stock <= 0'),
+  db.execute(
+    `SELECT p.*, c.name AS category_name FROM products p
+     LEFT JOIN categories c ON c.id = p.category_id
+     ORDER BY p.created_at DESC, p.id DESC LIMIT 6`
+  ),
+]);
+
+const stats = [
+  {
+    label: 'Pedidos pendientes',
+    value: Number(pendingOrders.rows[0].n),
+    href: '/admin/pedidos?estado=pendiente',
+    alert: Number(pendingOrders.rows[0].n) > 0,
+  },
+  { label: 'Productos', value: Number(prodCount.rows[0].n), href: '/admin/productos' },
+  { label: 'Categorías', value: Number(catCount.rows[0].n), href: '/admin/categorias' },
+  { label: 'Sin stock', value: Number(noStock.rows[0].n), alert: Number(noStock.rows[0].n) > 0 },
+];
+
+const recent = recentRes.rows as unknown as Product[];
+const user = Astro.locals.user;
+---
+
+<AdminLayout title="Dashboard — RemaTech admin">
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">Dashboard</h1>
+      <p class="mt-1 text-sm text-neutral-500">Hola {user?.name}, este es el resumen de tu tienda.</p>
+    </div>
+    <a
+      href="/admin/productos/nuevo"
+      class="rounded-full bg-neutral-900 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-neutral-700"
+    >
+      + Nuevo producto
+    </a>
+  </div>
+
+  <div class="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+    {stats.map((s) => (
+      <a
+        href={s.href ?? '#'}
+        class:list={[
+          'rounded-2xl border bg-white p-5 shadow-sm transition-shadow',
+          s.href ? 'hover:shadow-md' : 'pointer-events-none',
+          s.alert ? 'border-rose-200' : 'border-neutral-200',
+        ]}
+      >
+        <p class="text-sm text-neutral-500">{s.label}</p>
+        <p class:list={['mt-1 text-3xl font-extrabold', s.alert ? 'text-rose-600' : '']}>{s.value}</p>
+      </a>
+    ))}
+  </div>
+
+  <section class="mt-10">
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-bold">Últimos productos</h2>
+      <a href="/admin/productos" class="text-sm font-semibold text-neutral-900 hover:underline">Ver todos</a>
+    </div>
+
+    <div class="mt-4 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+      {recent.length === 0 ? (
+        <p class="p-10 text-center text-neutral-500">
+          Todavía no hay productos. <a href="/admin/productos/nuevo" class="font-semibold text-neutral-900 hover:underline">Cargá el primero</a>
+          o ejecutá <code class="rounded bg-neutral-100 px-1.5 py-0.5">npm run seed</code>.
+        </p>
+      ) : (
+        <table class="w-full text-sm">
+          <thead class="border-b border-neutral-200 bg-neutral-50 text-left text-xs text-neutral-500 uppercase">
+            <tr>
+              <th class="px-5 py-3 font-medium">Producto</th>
+              <th class="px-5 py-3 font-medium max-md:hidden">Categoría</th>
+              <th class="px-5 py-3 font-medium">Precio</th>
+              <th class="px-5 py-3 font-medium">Stock</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-neutral-100">
+            {recent.map((p) => (
+              <tr class="transition-colors hover:bg-neutral-50">
+                <td class="px-5 py-3">
+                  <a href={`/admin/productos/${p.id}`} class="flex items-center gap-3 font-medium hover:text-neutral-500">
+                    <img src={p.image_url} alt="" class="size-10 rounded-lg object-cover" />
+                    <span class="truncate">{p.name}</span>
+                  </a>
+                </td>
+                <td class="px-5 py-3 text-neutral-500 max-md:hidden">{p.category_name ?? '—'}</td>
+                <td class="px-5 py-3 font-semibold">{formatPrice(p.price)}</td>
+                <td class="px-5 py-3">
+                  <span
+                    class:list={[
+                      'rounded-full px-2.5 py-0.5 text-xs font-semibold',
+                      p.stock > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600',
+                    ]}
+                  >
+                    {p.stock > 0 ? `${p.stock} u.` : 'Sin stock'}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  </section>
+</AdminLayout>

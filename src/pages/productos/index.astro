@@ -1,0 +1,96 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import ProductCard from '../../components/ProductCard.astro';
+import { getDb, type Product, type Category } from '../../lib/db';
+
+const db = await getDb();
+
+const q = Astro.url.searchParams.get('q')?.trim() ?? '';
+const categorySlug = Astro.url.searchParams.get('categoria') ?? '';
+const orden = Astro.url.searchParams.get('orden') ?? 'nuevo';
+
+const categoriesRes = await db.execute('SELECT * FROM categories ORDER BY name');
+const categories = categoriesRes.rows as unknown as Category[];
+
+let sql = `SELECT p.*, c.name AS category_name, c.slug AS category_slug
+           FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE 1=1`;
+const args: (string | number)[] = [];
+
+if (q) {
+  sql += ' AND (p.name LIKE ? OR p.brand LIKE ? OR p.description LIKE ?)';
+  args.push(`%${q}%`, `%${q}%`, `%${q}%`);
+}
+if (categorySlug) {
+  sql += ' AND c.slug = ?';
+  args.push(categorySlug);
+}
+
+if (orden === 'precio-asc') sql += ' ORDER BY p.price ASC';
+else if (orden === 'precio-desc') sql += ' ORDER BY p.price DESC';
+else sql += ' ORDER BY p.created_at DESC, p.id DESC';
+
+const productsRes = await db.execute({ sql, args });
+const products = productsRes.rows as unknown as Product[];
+---
+
+<BaseLayout title="Notebooks — RemaTech">
+  <div class="mx-auto max-w-7xl px-4 py-12 sm:px-6">
+    <h1 class="text-3xl font-bold tracking-tight">Todas las notebooks</h1>
+    <p class="mt-2 text-neutral-500">
+      {products.length} {products.length === 1 ? 'resultado' : 'resultados'}
+      {q && <span> para «{q}»</span>}
+    </p>
+
+    <form method="GET" class="mt-8 flex flex-wrap items-center gap-3">
+      <div class="relative min-w-60 flex-1">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute top-1/2 left-4 size-4.5 -translate-y-1/2 text-neutral-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input
+          type="search"
+          name="q"
+          value={q}
+          placeholder="Buscar por nombre, marca..."
+          class="w-full rounded-full border border-neutral-200 bg-white py-2.5 pr-4 pl-11 text-sm shadow-sm outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+        />
+      </div>
+      <select
+        name="categoria"
+        class="rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:border-neutral-500"
+      >
+        <option value="">Todas las categorías</option>
+        {categories.map((c) => (
+          <option value={c.slug} selected={c.slug === categorySlug}>{c.name}</option>
+        ))}
+      </select>
+      <select
+        name="orden"
+        class="rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:border-neutral-500"
+      >
+        <option value="nuevo" selected={orden === 'nuevo'}>Más nuevos</option>
+        <option value="precio-asc" selected={orden === 'precio-asc'}>Menor precio</option>
+        <option value="precio-desc" selected={orden === 'precio-desc'}>Mayor precio</option>
+      </select>
+      <button
+        type="submit"
+        class="cursor-pointer rounded-full bg-neutral-900 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-neutral-700"
+      >
+        Filtrar
+      </button>
+    </form>
+
+    {products.length === 0 ? (
+      <div class="mt-16 rounded-2xl border border-dashed border-neutral-300 p-16 text-center">
+        <p class="text-lg font-semibold text-neutral-700">No encontramos resultados</p>
+        <p class="mt-1 text-neutral-500">Probá con otra búsqueda o quitá los filtros.</p>
+        <a href="/productos" class="mt-5 inline-block rounded-full bg-neutral-900 px-6 py-2.5 text-sm font-semibold text-white hover:bg-neutral-700">
+          Ver todo el catálogo
+        </a>
+      </div>
+    ) : (
+      <div class="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4" data-reveal-group>
+        {products.map((p) => (
+          <ProductCard product={p} />
+        ))}
+      </div>
+    )}
+  </div>
+</BaseLayout>
