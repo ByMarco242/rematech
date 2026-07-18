@@ -40,6 +40,7 @@ const SCHEMA = [
     name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     is_admin INTEGER NOT NULL DEFAULT 0,
+    role TEXT NOT NULL DEFAULT 'cliente',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
   `CREATE TABLE IF NOT EXISTS sessions (
@@ -351,6 +352,14 @@ const products = [
 async function main() {
   for (const stmt of SCHEMA) await db.execute(stmt);
 
+  // Migración para bases creadas antes de la columna role
+  try {
+    await db.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'cliente'");
+  } catch {
+    // la columna ya existe
+  }
+  await db.execute("UPDATE users SET role = 'admin' WHERE is_admin = 1 AND role = 'cliente'");
+
   // Admin
   const adminEmail = process.env.ADMIN_EMAIL || 'admin@rematech.com';
   const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
@@ -361,7 +370,7 @@ async function main() {
   if (existingAdmin.rows.length === 0) {
     const hash = await bcrypt.hash(adminPassword, 10);
     await db.execute({
-      sql: 'INSERT INTO users (email, name, password_hash, is_admin) VALUES (?, ?, ?, 1)',
+      sql: "INSERT INTO users (email, name, password_hash, is_admin, role) VALUES (?, ?, ?, 1, 'admin')",
       args: [adminEmail, 'Administrador', hash],
     });
     console.log(`✔ Admin creado: ${adminEmail} / ${adminPassword}`);

@@ -48,6 +48,7 @@ const SCHEMA = [
     name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     is_admin INTEGER NOT NULL DEFAULT 0,
+    role TEXT NOT NULL DEFAULT 'cliente',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
   `CREATE TABLE IF NOT EXISTS sessions (
@@ -79,6 +80,17 @@ export async function getDb(): Promise<Client> {
   if (!ready) {
     ready = (async () => {
       for (const stmt of SCHEMA) await c.execute(stmt);
+      // Migración para bases creadas antes de la columna role
+      try {
+        await c.execute(
+          "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'cliente'"
+        );
+      } catch {
+        // la columna ya existe
+      }
+      await c.execute(
+        "UPDATE users SET role = 'admin' WHERE is_admin = 1 AND role = 'cliente'"
+      );
     })();
   }
   await ready;

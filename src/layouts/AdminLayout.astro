@@ -9,32 +9,45 @@ const { title = 'Panel admin — RemaTech' } = Astro.props;
 const path = Astro.url.pathname;
 const user = Astro.locals.user;
 
-const links = [
+const allLinks = [
   {
     href: '/admin',
     label: 'Dashboard',
     icon: 'M3 13h8V3H3zM13 21h8V11h-8zM13 3v5h8V3zM3 21h8v-5H3z',
     exact: true,
+    adminOnly: false,
   },
   {
     href: '/admin/pedidos',
     label: 'Pedidos',
     icon: 'M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4ZM3 6h18M16 10a4 4 0 0 1-8 0',
     exact: false,
+    adminOnly: false,
   },
   {
     href: '/admin/productos',
     label: 'Productos',
     icon: 'm7.5 4.27 9 5.15M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Zm-18-.27 8.88 5.14a2 2 0 0 0 2 0L21 8M12 22V12',
     exact: false,
+    adminOnly: false,
   },
   {
     href: '/admin/categorias',
     label: 'Categorías',
     icon: 'M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l7.71 7.71a2.41 2.41 0 0 0 3.408 0l7.3-7.3a2.41 2.41 0 0 0 0-3.41zM7.5 8v-.01',
     exact: false,
+    adminOnly: true,
+  },
+  {
+    href: '/admin/usuarios',
+    label: 'Usuarios',
+    icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z',
+    exact: false,
+    adminOnly: true,
   },
 ];
+
+const links = allLinks.filter((l) => !l.adminOnly || user?.is_admin);
 
 function isActive(l: (typeof links)[number]) {
   return l.exact ? path === l.href : path.startsWith(l.href);

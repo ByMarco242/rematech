@@ -5,9 +5,11 @@ import { formatPrice } from '../../../lib/util';
 
 const db = await getDb();
 
+const isAdmin = Astro.locals.user?.is_admin ?? false;
+
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
-  if (form.get('_action') === 'delete') {
+  if (form.get('_action') === 'delete' && isAdmin) {
     const id = Number(form.get('id'));
     if (Number.isInteger(id)) {
       await db.execute({ sql: 'DELETE FROM products WHERE id = ?', args: [id] });
@@ -112,16 +114,18 @@ const products = res.rows as unknown as Product[];
                   >
                     Editar
                   </a>
-                  <form
-                    method="POST"
-                    onsubmit={`return confirm('¿Eliminar «${p.name.replace(/'/g, '')}»? Esta acción no se puede deshacer.')`}
-                  >
-                    <input type="hidden" name="_action" value="delete" />
-                    <input type="hidden" name="id" value={p.id} />
-                    <button type="submit" class="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50">
-                      Eliminar
-                    </button>
-                  </form>
+                  {isAdmin && (
+                    <form
+                      method="POST"
+                      onsubmit={`return confirm('¿Eliminar «${p.name.replace(/'/g, '')}»? Esta acción no se puede deshacer.')`}
+                    >
+                      <input type="hidden" name="_action" value="delete" />
+                      <input type="hidden" name="id" value={p.id} />
+                      <button type="submit" class="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50">
+                        Eliminar
+                      </button>
+                    </form>
+                  )}
                 </div>
               </td>
             </tr>

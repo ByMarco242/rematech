@@ -2,11 +2,32 @@ import bcrypt from 'bcryptjs';
 import type { AstroCookies } from 'astro';
 import { getDb } from './db';
 
+export type Role = 'admin' | 'empleado' | 'cliente';
+
 export interface SessionUser {
   id: number;
   email: string;
   name: string;
+  role: Role;
   is_admin: boolean;
+  is_staff: boolean;
+}
+
+function toRole(value: unknown): Role {
+  const r = String(value ?? 'cliente');
+  return r === 'admin' || r === 'empleado' ? r : 'cliente';
+}
+
+function makeSessionUser(row: Record<string, unknown>): SessionUser {
+  const role = toRole(row.role);
+  return {
+    id: Number(row.id),
+    email: String(row.email),
+    name: String(row.name),
+    role,
+    is_admin: role === 'admin',
+    is_staff: role === 'admin' || role === 'empleado',
+  };
 }
 
 const SESSION_COOKIE = 'session';
@@ -21,7 +42,8 @@ function randomToken(): string {
 export async function registerUser(
   name: string,
   email: string,
-  password: string
+  password: string,
+  role: Role = 'cliente'
 ): Promise<{ user?: SessionUser; error?: string }> {
   const db = await getDb();
   const existing = await db.execute({
@@ -33,11 +55,11 @@ export async function registerUser(
   }
   const hash = await bcrypt.hash(password, 10);
   const res = await db.execute({
-    sql: 'INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?)',
-    args: [email, name, hash],
+    sql: 'INSERT INTO users (email, name, password_hash, role, is_admin) VALUES (?, ?, ?, ?, ?)',
+    args: [email, name, hash, role, role === 'admin' ? 1 : 0],
   });
   return {
-    user: { id: Number(res.lastInsertRowid), email, name, is_admin: false },
+    user: makeSessionUser({ id: res.lastInsertRowid, email, name, role }),
   };
 }
 
@@ -47,19 +69,14 @@ export async function verifyLogin(
 ): Promise<SessionUser | null> {
   const db = await getDb();
   const res = await db.execute({
-    sql: 'SELECT id, email, name, password_hash, is_admin FROM users WHERE email = ?',
+    sql: 'SELECT id, email, name, password_hash, role FROM users WHERE email = ?',
     args: [email],
   });
   const row = res.rows[0];
   if (!row) return null;
   const ok = await bcrypt.compare(password, String(row.password_hash));
   if (!ok) return null;
-  return {
-    id: Number(row.id),
-    email: String(row.email),
-    name: String(row.name),
-    is_admin: Boolean(Number(row.is_admin)),
-  };
+  return makeSessionUser(row);
 }
 
 export async function createSession(userId: number, cookies: AstroCookies): Promise<void> {
@@ -82,7 +99,7 @@ export async function createSession(userId: number, cookies: AstroCookies): Prom
 export async function getSessionUser(token: string): Promise<SessionUser | null> {
   const db = await getDb();
   const res = await db.execute({
-    sql: `SELECT u.id, u.email, u.name, u.is_admin, s.expires_at
+    sql: `SELECT u.id, u.email, u.name, u.role, s.expires_at
           FROM sessions s JOIN users u ON u.id = s.user_id
           WHERE s.token = ?`,
     args: [token],
@@ -93,12 +110,7 @@ export async function getSessionUser(token: string): Promise<SessionUser | null>
     await db.execute({ sql: 'DELETE FROM sessions WHERE token = ?', args: [token] });
     return null;
   }
-  return {
-    id: Number(row.id),
-    email: String(row.email),
-    name: String(row.name),
-    is_admin: Boolean(Number(row.is_admin)),
-  };
+  return makeSessionUser(row);
 }
 
 export async function destroySession(cookies: AstroCookies): Promise<void> {

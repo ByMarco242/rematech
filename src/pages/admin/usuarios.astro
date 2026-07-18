@@ -1,0 +1,176 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { registerUser, type Role } from '../../lib/auth';
+import { getDb } from '../../lib/db';
+
+const db = await getDb();
+const me = Astro.locals.user!;
+
+let error = '';
+let ok = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const action = form.get('_action');
+
+  if (action === 'delete') {
+    const id = Number(form.get('id'));
+    if (Number.isInteger(id) && id !== me.id) {
+      await db.execute({ sql: 'DELETE FROM sessions WHERE user_id = ?', args: [id] });
+      await db.execute({ sql: 'DELETE FROM users WHERE id = ?', args: [id] });
+    }
+    return Astro.redirect('/admin/usuarios');
+  }
+
+  if (action === 'create') {
+    const name = String(form.get('name') ?? '').trim();
+    const email = String(form.get('email') ?? '').trim().toLowerCase();
+    const password = String(form.get('password') ?? '');
+    const roleRaw = String(form.get('role') ?? 'empleado');
+    const role: Role = roleRaw === 'admin' ? 'admin' : 'empleado';
+
+    if (!name || !email || !password) {
+      error = 'Completá todos los campos.';
+    } else if (password.length < 6) {
+      error = 'La contraseña debe tener al menos 6 caracteres.';
+    } else {
+      const result = await registerUser(name, email, password, role);
+      if (result.error) {
+        error = result.error;
+      } else {
+        ok = `Usuario ${email} creado con rol ${role}.`;
+      }
+    }
+  }
+}
+
+const res = await db.execute(
+  `SELECT id, email, name, role, created_at FROM users
+   ORDER BY CASE role WHEN 'admin' THEN 0 WHEN 'empleado' THEN 1 ELSE 2 END, created_at DESC`
+);
+const users = res.rows as unknown as {
+  id: number;
+  email: string;
+  name: string;
+  role: string;
+  created_at: string;
+}[];
+
+const roleStyle: Record<string, string> = {
+  admin: 'bg-neutral-900 text-white',
+  empleado: 'bg-neutral-200 text-neutral-800',
+  cliente: 'bg-neutral-100 text-neutral-500',
+};
+
+const dateFmt = new Intl.DateTimeFormat('es-PY', {
+  dateStyle: 'short',
+  timeZone: 'America/Asuncion',
+});
+
+function formatDate(sqlDate: string): string {
+  return dateFmt.format(new Date(sqlDate.replace(' ', 'T') + 'Z'));
+}
+
+const input =
+  'w-full rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200';
+---
+
+<AdminLayout title="Usuarios — RemaTech admin">
+  <h1 class="text-2xl font-bold tracking-tight">Usuarios</h1>
+  <p class="mt-1 text-sm text-neutral-500">
+    Creá cuentas para tu equipo. Los <strong>empleados</strong> pueden gestionar productos y
+    confirmar pedidos, pero no tocan categorías ni usuarios.
+  </p>
+
+  <div class="mt-8 grid gap-6 lg:grid-cols-3">
+    <div class="lg:col-span-2">
+      <div class="overflow-x-auto rounded-2xl border border-neutral-200 bg-white shadow-sm">
+        <table class="w-full min-w-130 text-sm">
+          <thead class="border-b border-neutral-200 bg-neutral-50 text-left text-xs text-neutral-500 uppercase">
+            <tr>
+              <th class="px-5 py-3 font-medium">Usuario</th>
+              <th class="px-5 py-3 font-medium">Rol</th>
+              <th class="px-5 py-3 font-medium">Alta</th>
+              <th class="px-5 py-3 text-right font-medium">Acciones</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-neutral-100">
+            {users.map((u) => (
+              <tr class="transition-colors hover:bg-neutral-50">
+                <td class="px-5 py-3">
+                  <p class="font-medium">
+                    {u.name}
+                    {u.id === me.id && <span class="ml-1 text-xs text-neutral-400">(vos)</span>}
+                  </p>
+                  <p class="text-xs text-neutral-400">{u.email}</p>
+                </td>
+                <td class="px-5 py-3">
+                  <span class:list={['rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize', roleStyle[u.role] ?? roleStyle.cliente]}>
+                    {u.role}
+                  </span>
+                </td>
+                <td class="px-5 py-3 text-neutral-500">{formatDate(u.created_at)}</td>
+                <td class="px-5 py-3">
+                  {u.id !== me.id && (
+                    <form
+                      method="POST"
+                      class="text-right"
+                      onsubmit={`return confirm('¿Eliminar al usuario «${u.email}»? Se cerrarán sus sesiones.')`}
+                    >
+                      <input type="hidden" name="_action" value="delete" />
+                      <input type="hidden" name="id" value={u.id} />
+                      <button type="submit" class="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50">
+                        Eliminar
+                      </button>
+                    </form>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <div class="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+        <h2 class="font-bold">Nuevo usuario</h2>
+        {error && (
+          <p class="mt-4 rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">{error}</p>
+        )}
+        {ok && (
+          <p class="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{ok}</p>
+        )}
+        <form method="POST" class="mt-4 space-y-4">
+          <input type="hidden" name="_action" value="create" />
+          <div>
+            <label for="u-name" class="mb-1.5 block text-sm font-medium text-neutral-700">Nombre *</label>
+            <input id="u-name" name="name" required class={input} placeholder="Nombre del empleado" />
+          </div>
+          <div>
+            <label for="u-email" class="mb-1.5 block text-sm font-medium text-neutral-700">Email *</label>
+            <input id="u-email" name="email" type="email" required class={input} placeholder="empleado@rematech.com" />
+          </div>
+          <div>
+            <label for="u-password" class="mb-1.5 block text-sm font-medium text-neutral-700">Contraseña *</label>
+            <input id="u-password" name="password" type="text" required minlength="6" class={input} placeholder="Mínimo 6 caracteres" />
+            <p class="mt-1 text-xs text-neutral-400">Compartila con el empleado por un canal seguro.</p>
+          </div>
+          <div>
+            <label for="u-role" class="mb-1.5 block text-sm font-medium text-neutral-700">Rol</label>
+            <select id="u-role" name="role" class={input}>
+              <option value="empleado" selected>Empleado — productos y pedidos</option>
+              <option value="admin">Administrador — acceso total</option>
+            </select>
+          </div>
+          <button
+            type="submit"
+            class="w-full cursor-pointer rounded-xl bg-neutral-900 py-3 font-semibold text-white transition-colors hover:bg-neutral-700"
+          >
+            Crear usuario
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</AdminLayout>
