@@ -51,7 +51,7 @@ const jsonLd = JSON.stringify({
   ...(product.brand ? { brand: { '@type': 'Brand', name: product.brand } } : {}),
   offers: {
     '@type': 'Offer',
-    url: new URL(`/productos/${product.slug}`, Astro.url.origin).href,
+    url: new URL(`/productos/${product.slug}`, Astro.site ?? Astro.url.origin).href,
     priceCurrency: 'PYG',
     price: product.price,
     availability:

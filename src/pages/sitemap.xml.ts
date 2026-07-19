@@ -1,9 +1,9 @@
 import type { APIRoute } from 'astro';
 import { getDb } from '../lib/db';
 
-export const GET: APIRoute = async ({ url }) => {
+export const GET: APIRoute = async ({ url, site }) => {
   const db = await getDb();
-  const origin = url.origin;
+  const origin = site?.origin ?? url.origin;
 
   const [productsRes, categoriesRes] = await Promise.all([
     db.execute('SELECT slug, created_at FROM products'),

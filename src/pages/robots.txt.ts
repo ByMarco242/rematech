@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 
-export const GET: APIRoute = async ({ url }) => {
+export const GET: APIRoute = async ({ url, site }) => {
+  const origin = site?.origin ?? url.origin;
   const body = `User-agent: *
 Allow: /
 Disallow: /admin
@@ -12,7 +13,7 @@ Disallow: /registro
 Disallow: /recuperar
 Disallow: /restablecer
 
-Sitemap: ${url.origin}/sitemap.xml
+Sitemap: ${origin}/sitemap.xml
 `;
   return new Response(body, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' },

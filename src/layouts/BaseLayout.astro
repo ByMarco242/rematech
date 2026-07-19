@@ -19,8 +19,10 @@ const {
   ogType = 'website',
 } = Astro.props;
 
-const canonical = new URL(Astro.url.pathname, Astro.url.origin).href;
-const ogImage = image ? new URL(image, Astro.url.origin).href : null;
+// En Vercel Astro.url.origin resuelve a localhost: el dominio real viene de `site`
+const origin = Astro.site?.origin ?? Astro.url.origin;
+const canonical = new URL(Astro.url.pathname, origin).href;
+const ogImage = image ? new URL(image, origin).href : null;
 ---
 
 <!doctype html>
