@@ -24,6 +24,7 @@ const SCHEMA = [
     description TEXT NOT NULL DEFAULT '',
     price REAL NOT NULL DEFAULT 0,
     old_price REAL,
+    cost REAL NOT NULL DEFAULT 0,
     image_url TEXT NOT NULL DEFAULT '',
     category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
     cpu TEXT NOT NULL DEFAULT '',
@@ -69,6 +70,7 @@ const SCHEMA = [
     product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
     product_name TEXT NOT NULL,
     price REAL NOT NULL,
+    cost REAL NOT NULL DEFAULT 0,
     qty INTEGER NOT NULL
   )`,
 ];
@@ -358,11 +360,18 @@ const products = [
 async function main() {
   for (const stmt of SCHEMA) await db.execute(stmt);
 
-  // Migración para bases creadas antes de la columna role
-  try {
-    await db.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'cliente'");
-  } catch {
-    // la columna ya existe
+  // Migraciones para bases creadas con esquemas anteriores
+  const migrations = [
+    "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'cliente'",
+    'ALTER TABLE products ADD COLUMN cost REAL NOT NULL DEFAULT 0',
+    'ALTER TABLE order_items ADD COLUMN cost REAL NOT NULL DEFAULT 0',
+  ];
+  for (const m of migrations) {
+    try {
+      await db.execute(m);
+    } catch {
+      // la columna ya existe
+    }
   }
   await db.execute("UPDATE users SET role = 'admin' WHERE is_admin = 1 AND role = 'cliente'");
 
@@ -410,13 +419,15 @@ async function main() {
       args: [p.slug],
     });
     if (existing.rows.length > 0) continue;
+    // Costo de ejemplo: ~80% del precio de venta (margen 20%)
+    const cost = Math.round((p.price * 0.8) / 10000) * 10000;
     await db.execute({
       sql: `INSERT INTO products
-              (name, slug, brand, description, price, old_price, image_url,
+              (name, slug, brand, description, price, old_price, cost, image_url,
                category_id, cpu, ram, storage, screen, stock, featured)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
-        p.name, p.slug, p.brand, p.description, p.price, p.old_price, p.image_url,
+        p.name, p.slug, p.brand, p.description, p.price, p.old_price, cost, p.image_url,
         catIds[p.category] ?? null, p.cpu, p.ram, p.storage, p.screen, p.stock, p.featured,
       ],
     });

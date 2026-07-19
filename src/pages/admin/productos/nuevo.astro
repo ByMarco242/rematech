@@ -20,11 +20,11 @@ if (Astro.request.method === 'POST') {
     const slug = await uniqueProductSlug(d.name);
     await db.execute({
       sql: `INSERT INTO products
-              (name, slug, brand, description, price, old_price, image_url,
+              (name, slug, brand, description, price, old_price, cost, image_url,
                category_id, cpu, ram, storage, screen, stock, featured)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
-        d.name, slug, d.brand, d.description, d.price, d.old_price, d.image_url,
+        d.name, slug, d.brand, d.description, d.price, d.old_price, d.cost, d.image_url,
         d.category_id, d.cpu, d.ram, d.storage, d.screen, d.stock, d.featured,
       ],
     });

@@ -7,6 +7,7 @@ export interface ProductInput {
   description: string;
   price: number;
   old_price: number | null;
+  cost: number;
   image_url: string;
   category_id: number | null;
   cpu: string;
@@ -30,6 +31,12 @@ export function parseProductForm(form: FormData): { data?: ProductInput; error?:
     return { error: 'El precio anterior no es válido.' };
   }
 
+  const costRaw = String(form.get('cost') ?? '').trim();
+  const cost = costRaw ? Number(costRaw) : 0;
+  if (!Number.isFinite(cost) || cost < 0) {
+    return { error: 'El costo no es válido.' };
+  }
+
   const categoryRaw = String(form.get('category_id') ?? '').trim();
   const categoryId = categoryRaw ? Number(categoryRaw) : null;
 
@@ -45,6 +52,7 @@ export function parseProductForm(form: FormData): { data?: ProductInput; error?:
       description: text('description', 4000),
       price,
       old_price: oldPrice,
+      cost,
       image_url: text('image_url', 500),
       category_id: categoryId !== null && Number.isInteger(categoryId) ? categoryId : null,
       cpu: text('cpu', 100),

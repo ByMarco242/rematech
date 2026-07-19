@@ -82,6 +82,11 @@ const label = 'mb-1.5 block text-sm font-medium text-neutral-700';
           <input id="old_price" name="old_price" type="number" step="1" min="0" value={product.old_price ?? ''} class={input} placeholder="Opcional" />
         </div>
         <div>
+          <label for="cost" class={label}>Costo (Gs.) <span class="text-neutral-400">(no se muestra en la tienda)</span></label>
+          <input id="cost" name="cost" type="number" step="1" min="0" value={product.cost || ''} class={input} placeholder="Costo de compra" />
+          <p class="mt-1 text-xs text-neutral-400">Se usa para calcular márgenes y ganancias en Métricas.</p>
+        </div>
+        <div>
           <label for="stock" class={label}>Stock</label>
           <input id="stock" name="stock" type="number" min="0" value={product.stock ?? 0} class={input} />
         </div>

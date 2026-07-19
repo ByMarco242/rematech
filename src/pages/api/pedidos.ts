@@ -30,13 +30,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const db = await getDb();
 
-  const items: { product_id: number; name: string; price: number; qty: number }[] = [];
+  const items: { product_id: number; name: string; price: number; cost: number; qty: number }[] = [];
   for (const raw of rawItems.slice(0, 50)) {
     const id = Number((raw as { id?: unknown }).id);
     const qty = Math.min(Math.max(Math.floor(Number((raw as { qty?: unknown }).qty) || 1), 1), 99);
     if (!Number.isInteger(id)) continue;
     const res = await db.execute({
-      sql: 'SELECT id, name, price FROM products WHERE id = ?',
+      sql: 'SELECT id, name, price, cost FROM products WHERE id = ?',
       args: [id],
     });
     const row = res.rows[0];
@@ -45,6 +45,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       product_id: Number(row.id),
       name: String(row.name),
       price: Number(row.price),
+      cost: Number(row.cost ?? 0),
       qty,
     });
   }
@@ -67,9 +68,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   for (const item of items) {
     await db.execute({
-      sql: `INSERT INTO order_items (order_id, product_id, product_name, price, qty)
-            VALUES (?, ?, ?, ?, ?)`,
-      args: [orderId, item.product_id, item.name, item.price, item.qty],
+      sql: `INSERT INTO order_items (order_id, product_id, product_name, price, cost, qty)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [orderId, item.product_id, item.name, item.price, item.cost, item.qty],
     });
   }
 
