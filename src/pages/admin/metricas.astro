@@ -1,11 +1,11 @@
 ---
 import AdminLayout from '../../layouts/AdminLayout.astro';
-import { getDb } from '../../lib/db';
+import { getDb, SOLD_SQL } from '../../lib/db';
 import { formatPrice } from '../../lib/util';
 
 const db = await getDb();
 
-// Todas las métricas de ventas se calculan sobre pedidos APROBADOS
+// Métricas sobre ventas concretadas: aprobado, enviado o entregado
 const [
   totalsRes,
   monthRes,
@@ -17,14 +17,15 @@ const [
   byCategoryRes,
   inventoryRes,
   noCostRes,
+  expensesRes,
 ] = await Promise.all([
   db.execute(
     `SELECT COALESCE(SUM(total), 0) AS revenue, COUNT(*) AS n, COALESCE(AVG(total), 0) AS avg_ticket
-     FROM orders WHERE status = 'aprobado'`
+     FROM orders WHERE status IN ${SOLD_SQL}`
   ),
   db.execute(
     `SELECT COALESCE(SUM(total), 0) AS revenue, COUNT(*) AS n
-     FROM orders WHERE status = 'aprobado' AND created_at >= date('now', 'start of month')`
+     FROM orders WHERE status IN ${SOLD_SQL} AND created_at >= date('now', 'start of month')`
   ),
   db.execute(
     `SELECT
@@ -32,29 +33,30 @@ const [
        COALESCE(SUM(CASE WHEN oi.cost > 0 THEN oi.price * oi.qty END), 0) AS revenue_with_cost,
        COALESCE(SUM(CASE WHEN oi.cost <= 0 THEN oi.qty ELSE 0 END), 0) AS units_no_cost
      FROM order_items oi JOIN orders o ON o.id = oi.order_id
-     WHERE o.status = 'aprobado'`
+     WHERE o.status IN ${SOLD_SQL}`
   ),
   db.execute(
     `SELECT COALESCE(SUM(oi.qty), 0) AS units
-     FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.status = 'aprobado'`
+     FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.status IN ${SOLD_SQL}`
   ),
   db.execute(
     `SELECT
        COUNT(*) AS total,
-       SUM(CASE WHEN status = 'aprobado' THEN 1 ELSE 0 END) AS aprobados,
+       SUM(CASE WHEN status IN ${SOLD_SQL} THEN 1 ELSE 0 END) AS vendidos,
        SUM(CASE WHEN status = 'pendiente' THEN 1 ELSE 0 END) AS pendientes,
-       SUM(CASE WHEN status = 'rechazado' THEN 1 ELSE 0 END) AS rechazados
+       SUM(CASE WHEN status = 'rechazado' THEN 1 ELSE 0 END) AS rechazados,
+       SUM(CASE WHEN status = 'cancelado' THEN 1 ELSE 0 END) AS cancelados
      FROM orders`
   ),
   db.execute(
     `SELECT strftime('%Y-%m', created_at) AS ym, COALESCE(SUM(total), 0) AS revenue, COUNT(*) AS n
-     FROM orders WHERE status = 'aprobado' AND created_at >= date('now', 'start of month', '-5 months')
+     FROM orders WHERE status IN ${SOLD_SQL} AND created_at >= date('now', 'start of month', '-5 months')
      GROUP BY ym ORDER BY ym`
   ),
   db.execute(
     `SELECT oi.product_name, SUM(oi.qty) AS units, SUM(oi.price * oi.qty) AS revenue
      FROM order_items oi JOIN orders o ON o.id = oi.order_id
-     WHERE o.status = 'aprobado'
+     WHERE o.status IN ${SOLD_SQL}
      GROUP BY oi.product_name ORDER BY revenue DESC LIMIT 5`
   ),
   db.execute(
@@ -63,7 +65,7 @@ const [
      JOIN orders o ON o.id = oi.order_id
      LEFT JOIN products p ON p.id = oi.product_id
      LEFT JOIN categories c ON c.id = p.category_id
-     WHERE o.status = 'aprobado'
+     WHERE o.status IN ${SOLD_SQL}
      GROUP BY category ORDER BY revenue DESC`
   ),
   db.execute(
@@ -71,10 +73,15 @@ const [
        COALESCE(SUM(stock), 0) AS units,
        COALESCE(SUM(stock * price), 0) AS retail_value,
        COALESCE(SUM(stock * cost), 0) AS cost_value,
-       SUM(CASE WHEN stock <= 0 THEN 1 ELSE 0 END) AS out_of_stock
+       SUM(CASE WHEN stock <= 0 OR (min_stock > 0 AND stock <= min_stock) THEN 1 ELSE 0 END) AS critical
      FROM products`
   ),
   db.execute(`SELECT COUNT(*) AS n FROM products WHERE cost <= 0`),
+  db.execute(
+    `SELECT COALESCE(SUM(amount), 0) AS total,
+            COALESCE(SUM(CASE WHEN expense_date >= date('now', 'start of month') THEN amount END), 0) AS month
+     FROM expenses`
+  ),
 ]);
 
 const totals = totalsRes.rows[0];
@@ -84,6 +91,7 @@ const units = Number(unitsRes.rows[0].units);
 const rates = ratesRes.rows[0];
 const inventory = inventoryRes.rows[0];
 const productsNoCost = Number(noCostRes.rows[0].n);
+const expenses = expensesRes.rows[0];
 
 const revenue = Number(totals.revenue);
 const grossProfit = Number(profit.gross_profit);
@@ -91,9 +99,11 @@ const revenueWithCost = Number(profit.revenue_with_cost);
 const unitsNoCost = Number(profit.units_no_cost);
 const marginPct = revenueWithCost > 0 ? Math.round((grossProfit / revenueWithCost) * 100) : null;
 const totalOrders = Number(rates.total);
-const approvalRate = totalOrders > 0 ? Math.round((Number(rates.aprobados) / totalOrders) * 100) : null;
+const decided = totalOrders - Number(rates.pendientes);
+const approvalRate = decided > 0 ? Math.round((Number(rates.vendidos) / decided) * 100) : null;
+const totalExpenses = Number(expenses.total);
+const netProfit = grossProfit - totalExpenses;
 
-// Últimos 6 meses (incluye meses sin ventas)
 const monthlyMap = new Map(
   monthlyRes.rows.map((r) => [String(r.ym), { revenue: Number(r.revenue), n: Number(r.n) }])
 );
@@ -127,22 +137,75 @@ const compact = new Intl.NumberFormat('es-PY', {
   maximumFractionDigits: 1,
 });
 
+// ---- Reporte por período (?desde=YYYY-MM-DD&hasta=YYYY-MM-DD) ----
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const desdeRaw = Astro.url.searchParams.get('desde') ?? '';
+const hastaRaw = Astro.url.searchParams.get('hasta') ?? '';
+const desde = DATE_RE.test(desdeRaw) ? desdeRaw : '';
+const hasta = DATE_RE.test(hastaRaw) ? hastaRaw : '';
+
+let period: {
+  revenue: number;
+  n: number;
+  units: number;
+  profit: number;
+  days: { day: string; revenue: number; n: number }[];
+} | null = null;
+
+if (desde && hasta) {
+  const [pTotals, pDays] = await Promise.all([
+    db.execute({
+      sql: `SELECT COALESCE(SUM(o.total), 0) AS revenue, COUNT(DISTINCT o.id) AS n,
+                   COALESCE(SUM(oi.qty), 0) AS units,
+                   COALESCE(SUM(CASE WHEN oi.cost > 0 THEN (oi.price - oi.cost) * oi.qty END), 0) AS profit
+            FROM orders o LEFT JOIN order_items oi ON oi.order_id = o.id
+            WHERE o.status IN ${SOLD_SQL} AND date(o.created_at) BETWEEN ? AND ?`,
+      args: [desde, hasta],
+    }),
+    db.execute({
+      sql: `SELECT date(created_at) AS day, COALESCE(SUM(total), 0) AS revenue, COUNT(*) AS n
+            FROM orders WHERE status IN ${SOLD_SQL} AND date(created_at) BETWEEN ? AND ?
+            GROUP BY day ORDER BY day DESC`,
+      args: [desde, hasta],
+    }),
+  ]);
+  period = {
+    revenue: Number(pTotals.rows[0].revenue),
+    n: Number(pTotals.rows[0].n),
+    units: Number(pTotals.rows[0].units),
+    profit: Number(pTotals.rows[0].profit),
+    days: pDays.rows.map((r) => ({
+      day: String(r.day),
+      revenue: Number(r.revenue),
+      n: Number(r.n),
+    })),
+  };
+}
+
 const kpis = [
-  { label: 'Ingresos totales', value: formatPrice(revenue), sub: `${rates.aprobados} ventas aprobadas` },
+  { label: 'Ingresos totales', value: formatPrice(revenue), sub: `${rates.vendidos} ventas` },
   { label: 'Ingresos este mes', value: formatPrice(Number(month.revenue)), sub: `${month.n} ventas` },
   {
     label: 'Ganancia bruta',
     value: marginPct === null ? '—' : formatPrice(grossProfit),
     sub: marginPct === null ? 'Cargá costos en tus productos' : `Margen ${marginPct}%`,
   },
-  { label: 'Ticket promedio', value: formatPrice(Number(totals.avg_ticket)), sub: 'por venta aprobada' },
-  { label: 'Unidades vendidas', value: String(units), sub: 'en ventas aprobadas' },
   {
-    label: 'Tasa de aprobación',
+    label: 'Ganancia neta',
+    value: marginPct === null ? '—' : formatPrice(netProfit),
+    sub: `Gastos: ${formatPrice(totalExpenses)}`,
+    alert: marginPct !== null && netProfit < 0,
+  },
+  { label: 'Ticket promedio', value: formatPrice(Number(totals.avg_ticket)), sub: `${units} unidades vendidas` },
+  {
+    label: 'Tasa de concreción',
     value: approvalRate === null ? '—' : `${approvalRate}%`,
-    sub: `${rates.pendientes} pendientes · ${rates.rechazados} rechazados`,
+    sub: `${rates.pendientes} pend. · ${rates.rechazados} rech. · ${rates.cancelados} canc.`,
   },
 ];
+
+const input =
+  'rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-neutral-500';
 ---
 
 <AdminLayout title="Métricas — NoteStore admin">
@@ -150,7 +213,7 @@ const kpis = [
     <div>
       <h1 class="text-2xl font-bold tracking-tight">Métricas del negocio</h1>
       <p class="mt-1 text-sm text-neutral-500">
-        Calculadas sobre las ventas aprobadas. Los pedidos pendientes y rechazados no suman.
+        Cuentan las ventas aprobadas, enviadas y entregadas. Cancelados y rechazados no suman.
       </p>
     </div>
     <a
@@ -158,7 +221,7 @@ const kpis = [
       class="flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-5 py-2.5 text-sm font-semibold text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50"
     >
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-4"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-      Exportar ventas (CSV)
+      Exportar todo (CSV)
     </a>
   </div>
 
@@ -166,15 +229,15 @@ const kpis = [
     <p class="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
       ⚠️ {productsNoCost > 0 && `Hay ${productsNoCost} ${productsNoCost === 1 ? 'producto' : 'productos'} sin costo cargado.`}
       {unitsNoCost > 0 && ` ${unitsNoCost} unidades vendidas no tienen costo registrado.`}
-      La ganancia bruta solo cuenta los ítems con costo — completá el campo «Costo» en cada producto para tener márgenes precisos.
+      Las ganancias solo cuentan los ítems con costo.
     </p>
   )}
 
   <div class="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-3">
     {kpis.map((k) => (
-      <div class="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div class:list={['rounded-2xl border bg-white p-5 shadow-sm', k.alert ? 'border-rose-200' : 'border-neutral-200']}>
         <p class="text-sm text-neutral-500">{k.label}</p>
-        <p class="mt-1 text-2xl font-extrabold break-words">{k.value}</p>
+        <p class:list={['mt-1 text-2xl font-extrabold break-words', k.alert ? 'text-rose-600' : '']}>{k.value}</p>
         <p class="mt-1 text-xs text-neutral-400">{k.sub}</p>
       </div>
     ))}
@@ -199,11 +262,80 @@ const kpis = [
     </div>
   </section>
 
+  <section class="mt-8 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+    <h2 class="font-bold">Reporte por período</h2>
+    <form method="GET" class="mt-4 flex flex-wrap items-end gap-3">
+      <div>
+        <label for="desde" class="mb-1.5 block text-xs font-medium text-neutral-500">Desde</label>
+        <input id="desde" type="date" name="desde" value={desde} required class={input} />
+      </div>
+      <div>
+        <label for="hasta" class="mb-1.5 block text-xs font-medium text-neutral-500">Hasta</label>
+        <input id="hasta" type="date" name="hasta" value={hasta} required class={input} />
+      </div>
+      <button type="submit" class="cursor-pointer rounded-xl bg-neutral-900 px-6 py-2.5 text-sm font-semibold text-white hover:bg-neutral-700">
+        Generar
+      </button>
+      {period && (
+        <a
+          href={`/admin/ventas.csv?desde=${desde}&hasta=${hasta}`}
+          class="rounded-xl border border-neutral-200 px-6 py-2.5 text-sm font-semibold text-neutral-700 hover:bg-neutral-50"
+        >
+          Exportar período (CSV)
+        </a>
+      )}
+    </form>
+
+    {period && (
+      <>
+        <div class="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div class="rounded-xl bg-neutral-50 p-4">
+            <p class="text-xs text-neutral-500">Ingresos</p>
+            <p class="mt-0.5 text-lg font-extrabold break-words">{formatPrice(period.revenue)}</p>
+          </div>
+          <div class="rounded-xl bg-neutral-50 p-4">
+            <p class="text-xs text-neutral-500">Ventas</p>
+            <p class="mt-0.5 text-lg font-extrabold">{period.n}</p>
+          </div>
+          <div class="rounded-xl bg-neutral-50 p-4">
+            <p class="text-xs text-neutral-500">Unidades</p>
+            <p class="mt-0.5 text-lg font-extrabold">{period.units}</p>
+          </div>
+          <div class="rounded-xl bg-neutral-50 p-4">
+            <p class="text-xs text-neutral-500">Ganancia bruta</p>
+            <p class="mt-0.5 text-lg font-extrabold break-words">{formatPrice(period.profit)}</p>
+          </div>
+        </div>
+
+        {period.days.length > 0 && (
+          <table class="mt-5 w-full text-sm">
+            <thead class="border-b border-neutral-200 text-left text-xs text-neutral-500 uppercase">
+              <tr>
+                <th class="py-2 pr-4 font-medium">Día</th>
+                <th class="py-2 pr-4 font-medium">Ventas</th>
+                <th class="py-2 text-right font-medium">Ingresos</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-neutral-100">
+              {period.days.map((d) => (
+                <tr>
+                  <td class="py-2 pr-4">{d.day}</td>
+                  <td class="py-2 pr-4 text-neutral-500">{d.n}</td>
+                  <td class="py-2 text-right font-semibold">{formatPrice(d.revenue)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </>
+    )}
+  </section>
+
   <div class="mt-8 grid gap-6 lg:grid-cols-2">
     <section class="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
       <h2 class="font-bold">Top productos por ingresos</h2>
       {topProducts.length === 0 ? (
-        <p class="mt-4 text-sm text-neutral-500">Todavía no hay ventas aprobadas.</p>
+        <p class="mt-4 text-sm text-neutral-500">Todavía no hay ventas.</p>
       ) : (
         <ul class="mt-5 space-y-4">
           {topProducts.map((p, i) => (
@@ -229,7 +361,7 @@ const kpis = [
     <section class="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
       <h2 class="font-bold">Ventas por categoría</h2>
       {byCategory.length === 0 ? (
-        <p class="mt-4 text-sm text-neutral-500">Todavía no hay ventas aprobadas.</p>
+        <p class="mt-4 text-sm text-neutral-500">Todavía no hay ventas.</p>
       ) : (
         <ul class="mt-5 space-y-4">
           {byCategory.map((c) => (
@@ -253,9 +385,6 @@ const kpis = [
 
   <section class="mt-8">
     <h2 class="text-lg font-bold">Inventario valorizado</h2>
-    <p class="mt-1 text-sm text-neutral-500">
-      Lo que tenés en stock, valuado a precio de venta y a costo de compra.
-    </p>
     <div class="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
       <div class="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
         <p class="text-sm text-neutral-500">Unidades en stock</p>
@@ -271,12 +400,15 @@ const kpis = [
           {Number(inventory.cost_value) > 0 ? formatPrice(Number(inventory.cost_value)) : '—'}
         </p>
       </div>
-      <div class:list={['rounded-2xl border bg-white p-5 shadow-sm', Number(inventory.out_of_stock) > 0 ? 'border-rose-200' : 'border-neutral-200']}>
-        <p class="text-sm text-neutral-500">Productos sin stock</p>
-        <p class:list={['mt-1 text-2xl font-extrabold', Number(inventory.out_of_stock) > 0 ? 'text-rose-600' : '']}>
-          {Number(inventory.out_of_stock)}
+      <a
+        href="/admin/inventario"
+        class:list={['rounded-2xl border bg-white p-5 shadow-sm transition-shadow hover:shadow-md', Number(inventory.critical) > 0 ? 'border-amber-300' : 'border-neutral-200']}
+      >
+        <p class="text-sm text-neutral-500">Stock crítico</p>
+        <p class:list={['mt-1 text-2xl font-extrabold', Number(inventory.critical) > 0 ? 'text-amber-600' : '']}>
+          {Number(inventory.critical)}
         </p>
-      </div>
+      </a>
     </div>
   </section>
 </AdminLayout>

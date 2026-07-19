@@ -1,0 +1,101 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { createPasswordReset } from '../lib/auth';
+import { sendMail } from '../lib/mail';
+import { getDb } from '../lib/db';
+import { isRateLimited, recordAttempt, clientIp } from '../lib/ratelimit';
+
+if (Astro.locals.user) return Astro.redirect('/');
+
+let sent = false;
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const email = String(form.get('email') ?? '').trim().toLowerCase().slice(0, 254);
+  const ipKey = `recuperar-ip:${clientIp(Astro.request)}`;
+
+  if (!email) {
+    error = 'Ingresá tu email.';
+  } else if (await isRateLimited(ipKey, 5, 60)) {
+    error = 'Demasiadas solicitudes. Probá más tarde.';
+  } else {
+    await recordAttempt(ipKey);
+    const db = await getDb();
+    const res = await db.execute({
+      sql: 'SELECT id, name FROM users WHERE email = ?',
+      args: [email],
+    });
+    const user = res.rows[0];
+    if (user) {
+      const token = await createPasswordReset(Number(user.id));
+      const link = `${Astro.url.origin}/restablecer?token=${token}`;
+      await sendMail(
+        email,
+        'Restablecer tu contraseña — NoteStore',
+        `<p>Hola ${String(user.name)},</p>
+         <p>Recibimos un pedido para restablecer tu contraseña. Hacé clic en el enlace (vale por 1 hora):</p>
+         <p><a href="${link}">${link}</a></p>
+         <p>Si no fuiste vos, ignorá este mensaje.</p>`
+      );
+    }
+    // Siempre el mismo mensaje: no revelamos si el email existe
+    sent = true;
+  }
+}
+---
+
+<BaseLayout title="Recuperar contraseña — NoteStore">
+  <div class="mx-auto flex max-w-md flex-col px-4 py-16 sm:px-6">
+    <div class="rounded-3xl border border-neutral-200 bg-white p-8 shadow-sm sm:p-10">
+      <h1 class="text-2xl font-bold tracking-tight">Recuperar contraseña</h1>
+
+      {sent ? (
+        <div class="mt-5 rounded-xl bg-emerald-50 px-4 py-4 text-sm text-emerald-700">
+          <p class="font-semibold">Solicitud recibida ✓</p>
+          <p class="mt-1">
+            Si ese email está registrado, te enviamos un enlace para restablecer la contraseña
+            (válido por 1 hora). Revisá también la carpeta de spam.
+          </p>
+          <p class="mt-2 text-emerald-600">
+            ¿No te llegó? Escribinos por la página de <a href="/contacto" class="font-semibold underline">contacto</a>
+            y un administrador puede restablecerla manualmente.
+          </p>
+        </div>
+      ) : (
+        <>
+          <p class="mt-2 text-sm text-neutral-500">
+            Ingresá tu email y te mandamos un enlace para crear una contraseña nueva.
+          </p>
+          {error && (
+            <p class="mt-5 rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">{error}</p>
+          )}
+          <form method="POST" class="mt-6 space-y-4">
+            <div>
+              <label for="email" class="mb-1.5 block text-sm font-medium text-neutral-700">Email</label>
+              <input
+                id="email"
+                type="email"
+                name="email"
+                required
+                autocomplete="email"
+                class="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-sm outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+                placeholder="tu@email.com"
+              />
+            </div>
+            <button
+              type="submit"
+              class="w-full cursor-pointer rounded-xl bg-neutral-900 py-3 font-semibold text-white transition-colors hover:bg-neutral-700"
+            >
+              Enviar enlace
+            </button>
+          </form>
+        </>
+      )}
+
+      <p class="mt-6 text-center text-sm text-neutral-500">
+        <a href="/login" class="font-semibold text-neutral-900 hover:underline">← Volver a ingresar</a>
+      </p>
+    </div>
+  </div>
+</BaseLayout>

@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { getDb } from '../../lib/db';
+import { getDb, SOLD_SQL } from '../../lib/db';
 
 function csvCell(value: unknown): string {
   const s = String(value ?? '');
@@ -8,18 +8,33 @@ function csvCell(value: unknown): string {
   return `"${safe.replace(/"/g, '""')}"`;
 }
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ url }) => {
   const db = await getDb();
-  const res = await db.execute(
-    `SELECT o.id, o.created_at, o.customer_name, o.customer_email,
-            oi.product_name, oi.qty, oi.price, oi.cost
-     FROM orders o JOIN order_items oi ON oi.order_id = o.id
-     WHERE o.status = 'aprobado'
-     ORDER BY o.created_at DESC, o.id DESC`
-  );
+
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const desde = url.searchParams.get('desde') ?? '';
+  const hasta = url.searchParams.get('hasta') ?? '';
+  const hasRange = DATE_RE.test(desde) && DATE_RE.test(hasta);
+
+  const res = hasRange
+    ? await db.execute({
+        sql: `SELECT o.id, o.invoice_number, o.created_at, o.status, o.customer_name, o.customer_email,
+                     oi.product_name, oi.qty, oi.price, oi.cost
+              FROM orders o JOIN order_items oi ON oi.order_id = o.id
+              WHERE o.status IN ${SOLD_SQL} AND date(o.created_at) BETWEEN ? AND ?
+              ORDER BY o.created_at DESC, o.id DESC`,
+        args: [desde, hasta],
+      })
+    : await db.execute(
+        `SELECT o.id, o.invoice_number, o.created_at, o.status, o.customer_name, o.customer_email,
+                oi.product_name, oi.qty, oi.price, oi.cost
+         FROM orders o JOIN order_items oi ON oi.order_id = o.id
+         WHERE o.status IN ${SOLD_SQL}
+         ORDER BY o.created_at DESC, o.id DESC`
+      );
 
   const header = [
-    'pedido', 'fecha_utc', 'cliente', 'email', 'producto',
+    'pedido', 'comprobante', 'estado', 'fecha_utc', 'cliente', 'email', 'producto',
     'cantidad', 'precio_unitario_gs', 'costo_unitario_gs',
     'subtotal_gs', 'ganancia_bruta_gs',
   ];
@@ -32,6 +47,8 @@ export const GET: APIRoute = async () => {
     lines.push(
       [
         csvCell(r.id),
+        csvCell(r.invoice_number ?? ''),
+        csvCell(r.status),
         csvCell(r.created_at),
         csvCell(r.customer_name),
         csvCell(r.customer_email),

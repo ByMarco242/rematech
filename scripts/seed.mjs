@@ -365,6 +365,13 @@ async function main() {
     "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'cliente'",
     'ALTER TABLE products ADD COLUMN cost REAL NOT NULL DEFAULT 0',
     'ALTER TABLE order_items ADD COLUMN cost REAL NOT NULL DEFAULT 0',
+    "ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE users ADD COLUMN address TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE orders ADD COLUMN customer_phone TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE orders ADD COLUMN customer_ruc TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE orders ADD COLUMN source TEXT NOT NULL DEFAULT 'web'",
+    'ALTER TABLE orders ADD COLUMN invoice_number INTEGER',
+    'ALTER TABLE products ADD COLUMN min_stock INTEGER NOT NULL DEFAULT 0',
   ];
   for (const m of migrations) {
     try {

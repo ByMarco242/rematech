@@ -2,7 +2,14 @@ import { defineMiddleware } from 'astro:middleware';
 import { getSessionUser } from './lib/auth';
 
 // Rutas del panel reservadas solo para administradores
-const ADMIN_ONLY = ['/admin/categorias', '/admin/usuarios', '/admin/metricas', '/admin/ventas'];
+const ADMIN_ONLY = [
+  '/admin/categorias',
+  '/admin/usuarios',
+  '/admin/metricas',
+  '/admin/ventas',
+  '/admin/gastos',
+  '/admin/configuracion',
+];
 
 const CSP = [
   "default-src 'self'",

@@ -1,0 +1,136 @@
+---
+import { getDb, type Order, type OrderItem, SOLD_SQL } from '../../../lib/db';
+import { getSettings } from '../../../lib/orders';
+import { formatPrice } from '../../../lib/util';
+import '../../../styles/global.css';
+
+const db = await getDb();
+const id = Number(Astro.params.id);
+if (!Number.isInteger(id)) return Astro.redirect('/admin/pedidos');
+
+const orderRes = await db.execute({
+  sql: `SELECT * FROM orders WHERE id = ? AND status IN ${SOLD_SQL}`,
+  args: [id],
+});
+const order = orderRes.rows[0] as unknown as Order | undefined;
+if (!order) return Astro.redirect('/admin/pedidos');
+
+const itemsRes = await db.execute({
+  sql: 'SELECT * FROM order_items WHERE order_id = ? ORDER BY id',
+  args: [id],
+});
+const items = itemsRes.rows as unknown as OrderItem[];
+
+const settings = await getSettings();
+
+// En Paraguay el IVA (10%) está incluido en el precio: gravada = total / 1.1
+const total = Number(order.total);
+const gravada = Math.round(total / 1.1);
+const iva = total - gravada;
+
+const invoiceNumber = String(order.invoice_number ?? order.id).padStart(7, '0');
+
+const dateFmt = new Intl.DateTimeFormat('es-PY', {
+  dateStyle: 'long',
+  timeZone: 'America/Asuncion',
+});
+const fecha = dateFmt.format(new Date(order.created_at.replace(' ', 'T') + 'Z'));
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Factura Nº {invoiceNumber} — {settings.business_name}</title>
+    <meta name="robots" content="noindex" />
+    <style>
+      @media print {
+        .no-print { display: none !important; }
+        body { background: white !important; }
+        .sheet { box-shadow: none !important; border: none !important; margin: 0 !important; }
+      }
+    </style>
+  </head>
+  <body class="min-h-screen bg-neutral-100 p-4 font-sans text-neutral-900 antialiased sm:p-10">
+    <div class="no-print mx-auto mb-4 flex max-w-3xl items-center justify-between">
+      <a href="/admin/pedidos" class="text-sm font-semibold text-neutral-600 hover:underline">← Volver a pedidos</a>
+      <button
+        onclick="window.print()"
+        class="cursor-pointer rounded-full bg-neutral-900 px-6 py-2.5 text-sm font-semibold text-white hover:bg-neutral-700"
+      >
+        🖨️ Imprimir / Guardar PDF
+      </button>
+    </div>
+
+    <div class="sheet mx-auto max-w-3xl rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm sm:p-12">
+      <header class="flex flex-wrap items-start justify-between gap-6 border-b border-neutral-200 pb-6">
+        <div>
+          <h1 class="text-2xl font-extrabold tracking-tight">{settings.business_name}</h1>
+          {settings.business_address && <p class="mt-1 text-sm text-neutral-500">{settings.business_address}</p>}
+          {settings.business_phone && <p class="text-sm text-neutral-500">Tel: {settings.business_phone}</p>}
+          {settings.business_ruc && <p class="mt-2 text-sm font-semibold">RUC: {settings.business_ruc}</p>}
+          {settings.business_timbrado && <p class="text-sm text-neutral-500">Timbrado Nº {settings.business_timbrado}</p>}
+        </div>
+        <div class="rounded-xl border border-neutral-200 px-5 py-4 text-right">
+          <p class="text-xs font-semibold tracking-wide text-neutral-400 uppercase">Comprobante de venta</p>
+          <p class="mt-1 text-xl font-extrabold">Nº {invoiceNumber}</p>
+          <p class="mt-1 text-sm text-neutral-500">{fecha}</p>
+        </div>
+      </header>
+
+      <section class="mt-6 grid gap-1 text-sm">
+        <p><span class="font-semibold">Cliente:</span> {order.customer_name}</p>
+        {order.customer_ruc && <p><span class="font-semibold">RUC/CI:</span> {order.customer_ruc}</p>}
+        {order.customer_email && <p><span class="font-semibold">Email:</span> {order.customer_email}</p>}
+        {order.customer_phone && <p><span class="font-semibold">Teléfono:</span> {order.customer_phone}</p>}
+        <p>
+          <span class="font-semibold">Condición de venta:</span>
+          {order.source === 'manual' ? ' Contado' : ' A convenir (pedido web)'}
+        </p>
+      </section>
+
+      <table class="mt-8 w-full text-sm">
+        <thead>
+          <tr class="border-b-2 border-neutral-900 text-left text-xs tracking-wide uppercase">
+            <th class="py-2 pr-2">Descripción</th>
+            <th class="py-2 pr-2 text-center">Cant.</th>
+            <th class="py-2 pr-2 text-right">Precio unit.</th>
+            <th class="py-2 text-right">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-neutral-100">
+          {items.map((item) => (
+            <tr>
+              <td class="py-2.5 pr-2">{item.product_name}</td>
+              <td class="py-2.5 pr-2 text-center">{item.qty}</td>
+              <td class="py-2.5 pr-2 text-right">{formatPrice(item.price)}</td>
+              <td class="py-2.5 text-right font-semibold">{formatPrice(item.price * item.qty)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div class="mt-6 ml-auto max-w-xs space-y-1.5 text-sm">
+        <div class="flex justify-between text-neutral-500">
+          <span>Gravada 10%</span>
+          <span>{formatPrice(gravada)}</span>
+        </div>
+        <div class="flex justify-between text-neutral-500">
+          <span>IVA (10%)</span>
+          <span>{formatPrice(iva)}</span>
+        </div>
+        <div class="flex justify-between border-t-2 border-neutral-900 pt-2 text-lg font-extrabold">
+          <span>TOTAL</span>
+          <span>{formatPrice(total)}</span>
+        </div>
+      </div>
+
+      <footer class="mt-10 border-t border-neutral-200 pt-4 text-center text-xs text-neutral-400">
+        {settings.business_ruc
+          ? 'Documento generado por el sistema de ventas.'
+          : 'Documento sin valor fiscal — configurá RUC y timbrado en Configuración para completarlo.'}
+      </footer>
+    </div>
+  </body>
+</html>

@@ -61,7 +61,9 @@ function isActive(href: string) {
               Panel admin
             </a>
           )}
-          <span class="hidden text-sm text-neutral-500 sm:block">Hola, {user.name.split(' ')[0]}</span>
+          <a href="/cuenta" class="hidden rounded-full px-3 py-1.5 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900 sm:block">
+            Hola, {user.name.split(' ')[0]}
+          </a>
           <form method="POST" action="/api/logout">
             <button
               type="submit"

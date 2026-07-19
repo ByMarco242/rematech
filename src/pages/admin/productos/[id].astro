@@ -22,11 +22,11 @@ if (Astro.request.method === 'POST') {
       sql: `UPDATE products SET
               name = ?, slug = ?, brand = ?, description = ?, price = ?, old_price = ?,
               cost = ?, image_url = ?, category_id = ?, cpu = ?, ram = ?, storage = ?,
-              screen = ?, stock = ?, featured = ?
+              screen = ?, stock = ?, min_stock = ?, featured = ?
             WHERE id = ?`,
       args: [
         d.name, slug, d.brand, d.description, d.price, d.old_price, d.cost, d.image_url,
-        d.category_id, d.cpu, d.ram, d.storage, d.screen, d.stock, d.featured, id,
+        d.category_id, d.cpu, d.ram, d.storage, d.screen, d.stock, d.min_stock, d.featured, id,
       ],
     });
     return Astro.redirect('/admin/productos');

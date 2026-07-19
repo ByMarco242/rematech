@@ -86,9 +86,15 @@ const label = 'mb-1.5 block text-sm font-medium text-neutral-700';
           <input id="cost" name="cost" type="number" step="1" min="0" value={product.cost || ''} class={input} placeholder="Costo de compra" />
           <p class="mt-1 text-xs text-neutral-400">Se usa para calcular márgenes y ganancias en Métricas.</p>
         </div>
-        <div>
-          <label for="stock" class={label}>Stock</label>
-          <input id="stock" name="stock" type="number" min="0" value={product.stock ?? 0} class={input} />
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="stock" class={label}>Stock</label>
+            <input id="stock" name="stock" type="number" min="0" value={product.stock ?? 0} class={input} />
+          </div>
+          <div>
+            <label for="min_stock" class={label}>Alerta mínimo</label>
+            <input id="min_stock" name="min_stock" type="number" min="0" value={product.min_stock ?? 0} class={input} placeholder="0 = sin alerta" />
+          </div>
         </div>
         <label class="flex cursor-pointer items-center gap-2.5 text-sm font-medium text-neutral-700">
           <input

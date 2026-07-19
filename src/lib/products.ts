@@ -15,6 +15,7 @@ export interface ProductInput {
   storage: string;
   screen: string;
   stock: number;
+  min_stock: number;
   featured: number;
 }
 
@@ -41,6 +42,7 @@ export function parseProductForm(form: FormData): { data?: ProductInput; error?:
   const categoryId = categoryRaw ? Number(categoryRaw) : null;
 
   const stock = Number(form.get('stock') ?? 0);
+  const minStock = Number(form.get('min_stock') ?? 0);
 
   const text = (field: string, max: number) =>
     String(form.get(field) ?? '').trim().slice(0, max);
@@ -60,6 +62,7 @@ export function parseProductForm(form: FormData): { data?: ProductInput; error?:
       storage: text('storage', 100),
       screen: text('screen', 100),
       stock: Number.isFinite(stock) && stock > 0 ? Math.floor(stock) : 0,
+      min_stock: Number.isFinite(minStock) && minStock > 0 ? Math.floor(minStock) : 0,
       featured: form.get('featured') ? 1 : 0,
     },
   };

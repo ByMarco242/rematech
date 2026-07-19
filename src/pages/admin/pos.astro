@@ -1,0 +1,205 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getDb } from '../../lib/db';
+import { createManualSale } from '../../lib/orders';
+
+const db = await getDb();
+const me = Astro.locals.user!;
+
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  let items: { productId: number; qty: number }[] = [];
+  try {
+    const parsed = JSON.parse(String(form.get('items') ?? '[]'));
+    if (Array.isArray(parsed)) {
+      items = parsed.map((i) => ({ productId: Number(i.id), qty: Number(i.qty) }));
+    }
+  } catch {
+    items = [];
+  }
+
+  const result = await createManualSale(
+    {
+      customerName: String(form.get('customer_name') ?? '').trim().slice(0, 80),
+      customerPhone: String(form.get('customer_phone') ?? '').trim().slice(0, 30),
+      customerRuc: String(form.get('customer_ruc') ?? '').trim().slice(0, 30),
+      items,
+    },
+    me
+  );
+
+  if (result.error) {
+    error = result.error;
+  } else if (result.orderId) {
+    return Astro.redirect(`/admin/factura/${result.orderId}`);
+  }
+}
+
+const productsRes = await db.execute(
+  'SELECT id, name, price, stock FROM products WHERE stock > 0 ORDER BY name'
+);
+const products = productsRes.rows.map((r) => ({
+  id: Number(r.id),
+  name: String(r.name),
+  price: Number(r.price),
+  stock: Number(r.stock),
+}));
+
+const input =
+  'w-full rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200';
+---
+
+<AdminLayout title="Venta manual — NoteStore admin">
+  <h1 class="text-2xl font-bold tracking-tight">Venta manual (mostrador)</h1>
+  <p class="mt-1 text-sm text-neutral-500">
+    Registrá una venta presencial: descuenta stock, suma a las métricas y genera el comprobante al instante.
+  </p>
+
+  {error && (
+    <p class="mt-6 rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">{error}</p>
+  )}
+
+  <form method="POST" id="pos-form" class="mt-8 grid gap-6 lg:grid-cols-3">
+    <input type="hidden" name="items" id="pos-items-field" value="[]" />
+
+    <div class="space-y-5 lg:col-span-2">
+      <div class="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+        <h2 class="font-bold">Productos</h2>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <select id="pos-product" class:list={[input, 'flex-1', 'min-w-52']}>
+            {products.map((p) => (
+              <option value={p.id}>{p.name} — stock: {p.stock}</option>
+            ))}
+          </select>
+          <input id="pos-qty" type="number" min="1" value="1" class:list={[input, 'w-24']} />
+          <button
+            type="button"
+            id="pos-add"
+            class="cursor-pointer rounded-xl bg-neutral-900 px-6 py-2.5 text-sm font-semibold text-white hover:bg-neutral-700"
+          >
+            Agregar
+          </button>
+        </div>
+
+        {products.length === 0 && (
+          <p class="mt-4 text-sm text-neutral-500">No hay productos con stock disponible.</p>
+        )}
+
+        <ul id="pos-list" class="mt-5 divide-y divide-neutral-100"></ul>
+        <p id="pos-empty" class="mt-4 rounded-xl border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-400">
+          Agregá productos a la venta.
+        </p>
+      </div>
+    </div>
+
+    <div class="space-y-5">
+      <div class="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+        <h2 class="font-bold">Cliente</h2>
+        <div class="mt-4 space-y-4">
+          <div>
+            <label for="customer_name" class="mb-1.5 block text-sm font-medium text-neutral-700">Nombre</label>
+            <input id="customer_name" name="customer_name" class={input} placeholder="Consumidor final" />
+          </div>
+          <div>
+            <label for="customer_ruc" class="mb-1.5 block text-sm font-medium text-neutral-700">RUC / CI</label>
+            <input id="customer_ruc" name="customer_ruc" class={input} placeholder="Opcional" />
+          </div>
+          <div>
+            <label for="customer_phone" class="mb-1.5 block text-sm font-medium text-neutral-700">Teléfono</label>
+            <input id="customer_phone" name="customer_phone" class={input} placeholder="Opcional" />
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+        <div class="flex items-center justify-between">
+          <span class="font-medium text-neutral-600">Total</span>
+          <span id="pos-total" class="text-2xl font-extrabold">Gs. 0</span>
+        </div>
+        <button
+          type="submit"
+          id="pos-submit"
+          disabled
+          class="mt-5 w-full cursor-pointer rounded-xl bg-emerald-600 py-3.5 font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Registrar venta
+        </button>
+        <p class="mt-3 text-center text-xs text-neutral-400">
+          Al registrar se abre el comprobante para imprimir.
+        </p>
+      </div>
+    </div>
+  </form>
+
+  <script is:inline define:vars={{ products }}>
+    const byId = new Map(products.map((p) => [p.id, p]));
+    const cart = [];
+    const fmt = new Intl.NumberFormat('es-PY', {
+      style: 'currency',
+      currency: 'PYG',
+      maximumFractionDigits: 0,
+    });
+
+    const list = document.getElementById('pos-list');
+    const empty = document.getElementById('pos-empty');
+    const totalEl = document.getElementById('pos-total');
+    const field = document.getElementById('pos-items-field');
+    const submit = document.getElementById('pos-submit');
+
+    function render() {
+      list.innerHTML = '';
+      let total = 0;
+      for (const item of cart) {
+        const p = byId.get(item.id);
+        total += p.price * item.qty;
+        const li = document.createElement('li');
+        li.className = 'flex items-center justify-between gap-3 py-2.5 text-sm';
+        const left = document.createElement('span');
+        left.textContent = `${p.name} x${item.qty}`;
+        const right = document.createElement('span');
+        right.className = 'flex items-center gap-3';
+        const price = document.createElement('span');
+        price.className = 'font-semibold';
+        price.textContent = fmt.format(p.price * item.qty);
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'cursor-pointer text-rose-500 hover:text-rose-700';
+        del.textContent = '✕';
+        del.addEventListener('click', () => {
+          cart.splice(cart.indexOf(item), 1);
+          render();
+        });
+        right.append(price, del);
+        li.append(left, right);
+        list.appendChild(li);
+      }
+      empty.classList.toggle('hidden', cart.length > 0);
+      totalEl.textContent = fmt.format(total);
+      field.value = JSON.stringify(cart);
+      submit.disabled = cart.length === 0;
+    }
+
+    document.getElementById('pos-add').addEventListener('click', () => {
+      const select = document.getElementById('pos-product');
+      const qtyInput = document.getElementById('pos-qty');
+      const id = Number(select.value);
+      const p = byId.get(id);
+      if (!p) return;
+      const qty = Math.max(1, Math.floor(Number(qtyInput.value) || 1));
+      const existing = cart.find((i) => i.id === id);
+      const already = existing ? existing.qty : 0;
+      if (already + qty > p.stock) {
+        alert(`Stock insuficiente: quedan ${p.stock} de ${p.name}`);
+        return;
+      }
+      if (existing) existing.qty += qty;
+      else cart.push({ id, qty });
+      qtyInput.value = '1';
+      render();
+    });
+
+    render();
+  </script>
+</AdminLayout>

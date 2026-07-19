@@ -59,10 +59,17 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const total = items.reduce((acc, i) => acc + i.price * i.qty, 0);
 
+  const profileRes = await db.execute({
+    sql: 'SELECT phone, address FROM users WHERE id = ?',
+    args: [user.id],
+  });
+  const phone = String(profileRes.rows[0]?.phone ?? '');
+  const address = String(profileRes.rows[0]?.address ?? '');
+
   const orderRes = await db.execute({
-    sql: `INSERT INTO orders (user_id, customer_name, customer_email, status, total)
-          VALUES (?, ?, ?, 'pendiente', ?)`,
-    args: [user.id, user.name, user.email, total],
+    sql: `INSERT INTO orders (user_id, customer_name, customer_email, customer_phone, status, total)
+          VALUES (?, ?, ?, ?, 'pendiente', ?)`,
+    args: [user.id, user.name, user.email, phone, total],
   });
   const orderId = Number(orderRes.lastInsertRowid);
 
@@ -81,6 +88,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
     '',
     `Total: ${formatPrice(total)}`,
     `Mi nombre: ${user.name}`,
+    ...(phone ? [`Mi teléfono: ${phone}`] : []),
+    ...(address ? [`Mi dirección: ${address}`] : []),
   ];
   const waUrl = `https://wa.me/${whatsappNumber()}?text=${encodeURIComponent(lines.join('\n'))}`;
 

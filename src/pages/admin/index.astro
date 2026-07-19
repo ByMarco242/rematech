@@ -9,7 +9,9 @@ const [prodCount, catCount, pendingOrders, noStock, recentRes] = await Promise.a
   db.execute('SELECT COUNT(*) AS n FROM products'),
   db.execute('SELECT COUNT(*) AS n FROM categories'),
   db.execute("SELECT COUNT(*) AS n FROM orders WHERE status = 'pendiente'"),
-  db.execute('SELECT COUNT(*) AS n FROM products WHERE stock <= 0'),
+  db.execute(
+    'SELECT COUNT(*) AS n FROM products WHERE stock <= 0 OR (min_stock > 0 AND stock <= min_stock)'
+  ),
   db.execute(
     `SELECT p.*, c.name AS category_name FROM products p
      LEFT JOIN categories c ON c.id = p.category_id
@@ -26,7 +28,12 @@ const stats = [
   },
   { label: 'Productos', value: Number(prodCount.rows[0].n), href: '/admin/productos' },
   { label: 'Categorías', value: Number(catCount.rows[0].n), href: '/admin/categorias' },
-  { label: 'Sin stock', value: Number(noStock.rows[0].n), alert: Number(noStock.rows[0].n) > 0 },
+  {
+    label: 'Stock crítico',
+    value: Number(noStock.rows[0].n),
+    href: '/admin/inventario',
+    alert: Number(noStock.rows[0].n) > 0,
+  },
 ];
 
 const recent = recentRes.rows as unknown as Product[];

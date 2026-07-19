@@ -145,6 +145,60 @@ export async function getSessionUser(token: string): Promise<SessionUser | null>
   return makeSessionUser(row);
 }
 
+/** Crea un token de restablecimiento (1 hora de validez) y devuelve el token plano */
+export async function createPasswordReset(userId: number): Promise<string> {
+  const db = await getDb();
+  const token = randomToken();
+  const expires = new Date(Date.now() + 60 * 60 * 1000);
+  await db.execute({ sql: 'DELETE FROM password_resets WHERE user_id = ?', args: [userId] });
+  await db.execute({
+    sql: 'INSERT INTO password_resets (token, user_id, expires_at) VALUES (?, ?, ?)',
+    args: [hashToken(token), userId, expires.toISOString()],
+  });
+  return token;
+}
+
+/** Valida el token y devuelve el user_id, o null si es inválido/vencido */
+export async function verifyPasswordReset(token: string): Promise<number | null> {
+  const db = await getDb();
+  const res = await db.execute({
+    sql: 'SELECT user_id, expires_at FROM password_resets WHERE token = ?',
+    args: [hashToken(token)],
+  });
+  const row = res.rows[0];
+  if (!row) return null;
+  if (new Date(String(row.expires_at)) < new Date()) {
+    await db.execute({
+      sql: 'DELETE FROM password_resets WHERE token = ?',
+      args: [hashToken(token)],
+    });
+    return null;
+  }
+  return Number(row.user_id);
+}
+
+/** Cambia la contraseña, consume los tokens y cierra todas las sesiones del usuario */
+export async function resetPassword(userId: number, newPassword: string): Promise<void> {
+  const db = await getDb();
+  const hash = await bcrypt.hash(newPassword, 10);
+  await db.execute({
+    sql: 'UPDATE users SET password_hash = ? WHERE id = ?',
+    args: [hash, userId],
+  });
+  await db.execute({ sql: 'DELETE FROM password_resets WHERE user_id = ?', args: [userId] });
+  await db.execute({ sql: 'DELETE FROM sessions WHERE user_id = ?', args: [userId] });
+}
+
+/** Genera una contraseña aleatoria que cumple las reglas de composición */
+export function generatePassword(): string {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const bytes = new Uint8Array(14);
+  crypto.getRandomValues(bytes);
+  let pw = '';
+  for (const b of bytes) pw += alphabet[b % alphabet.length];
+  return `Ns${pw}7`;
+}
+
 export async function destroySession(cookies: AstroCookies): Promise<void> {
   const token = cookies.get(SESSION_COOKIE)?.value;
   if (token) {

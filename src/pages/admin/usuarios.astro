@@ -1,6 +1,6 @@
 ---
 import AdminLayout from '../../layouts/AdminLayout.astro';
-import { registerUser, validatePassword, type Role } from '../../lib/auth';
+import { registerUser, validatePassword, resetPassword, generatePassword, type Role } from '../../lib/auth';
 import { getDb } from '../../lib/db';
 
 const db = await getDb();
@@ -20,6 +20,21 @@ if (Astro.request.method === 'POST') {
       await db.execute({ sql: 'DELETE FROM users WHERE id = ?', args: [id] });
     }
     return Astro.redirect('/admin/usuarios');
+  }
+
+  if (action === 'resetpw') {
+    const id = Number(form.get('id'));
+    if (Number.isInteger(id)) {
+      const target = await db.execute({
+        sql: 'SELECT email FROM users WHERE id = ?',
+        args: [id],
+      });
+      if (target.rows[0]) {
+        const newPassword = generatePassword();
+        await resetPassword(id, newPassword);
+        ok = `Nueva contraseña para ${target.rows[0].email}: ${newPassword} — compartila por un canal seguro; se cerraron sus sesiones.`;
+      }
+    }
   }
 
   if (action === 'create') {
@@ -116,17 +131,28 @@ const input =
                 <td class="px-5 py-3 text-neutral-500">{formatDate(u.created_at)}</td>
                 <td class="px-5 py-3">
                   {u.id !== me.id && (
-                    <form
-                      method="POST"
-                      class="text-right"
-                      onsubmit={`return confirm('¿Eliminar al usuario «${u.email}»? Se cerrarán sus sesiones.')`}
-                    >
-                      <input type="hidden" name="_action" value="delete" />
-                      <input type="hidden" name="id" value={u.id} />
-                      <button type="submit" class="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50">
-                        Eliminar
-                      </button>
-                    </form>
+                    <div class="flex items-center justify-end gap-1">
+                      <form
+                        method="POST"
+                        onsubmit={`return confirm('¿Generar una contraseña nueva para «${u.email}»? La actual deja de funcionar.')`}
+                      >
+                        <input type="hidden" name="_action" value="resetpw" />
+                        <input type="hidden" name="id" value={u.id} />
+                        <button type="submit" class="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:bg-neutral-100">
+                          Resetear clave
+                        </button>
+                      </form>
+                      <form
+                        method="POST"
+                        onsubmit={`return confirm('¿Eliminar al usuario «${u.email}»? Se cerrarán sus sesiones.')`}
+                      >
+                        <input type="hidden" name="_action" value="delete" />
+                        <input type="hidden" name="id" value={u.id} />
+                        <button type="submit" class="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50">
+                          Eliminar
+                        </button>
+                      </form>
+                    </div>
                   )}
                 </td>
               </tr>
