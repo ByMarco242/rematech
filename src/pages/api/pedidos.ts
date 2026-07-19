@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { getDb } from '../../lib/db';
 import { formatPrice } from '../../lib/util';
+import { notifyAdminsNewOrder } from '../../lib/notify';
 
 function whatsappNumber(): string {
   return (
@@ -92,6 +93,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
     ...(address ? [`Mi dirección: ${address}`] : []),
   ];
   const waUrl = `https://wa.me/${whatsappNumber()}?text=${encodeURIComponent(lines.join('\n'))}`;
+
+  await notifyAdminsNewOrder(orderId, user.name, total);
 
   return new Response(JSON.stringify({ ok: true, orderId, waUrl }), {
     status: 200,

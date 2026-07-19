@@ -8,6 +8,7 @@ const ADMIN_ONLY = [
   '/admin/metricas',
   '/admin/ventas',
   '/admin/gastos',
+  '/admin/clientes',
   '/admin/configuracion',
 ];
 

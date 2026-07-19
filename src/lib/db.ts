@@ -69,6 +69,7 @@ const SCHEMA = [
     customer_ruc TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pendiente',
     source TEXT NOT NULL DEFAULT 'web',
+    seller_name TEXT NOT NULL DEFAULT '',
     invoice_number INTEGER,
     total REAL NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -135,6 +136,7 @@ export async function getDb(): Promise<Client> {
         "ALTER TABLE orders ADD COLUMN source TEXT NOT NULL DEFAULT 'web'",
         'ALTER TABLE orders ADD COLUMN invoice_number INTEGER',
         'ALTER TABLE products ADD COLUMN min_stock INTEGER NOT NULL DEFAULT 0',
+        "ALTER TABLE orders ADD COLUMN seller_name TEXT NOT NULL DEFAULT ''",
       ];
       for (const m of migrations) {
         try {
@@ -181,6 +183,7 @@ export interface Order {
   customer_ruc: string;
   status: OrderStatus;
   source: string;
+  seller_name: string;
   invoice_number: number | null;
   total: number;
   created_at: string;

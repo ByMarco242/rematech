@@ -1,5 +1,6 @@
 import { getDb, SOLD_SQL } from './db';
 import type { SessionUser } from './auth';
+import { notifyOrderStatus, notifyAdminsLowStock } from './notify';
 
 export async function recordStockMove(
   productId: number | null,
@@ -38,8 +39,10 @@ export async function approveOrder(orderId: number, user: SessionUser): Promise<
     sql: 'SELECT product_id, product_name, qty FROM order_items WHERE order_id = ?',
     args: [orderId],
   });
+  const touchedIds: number[] = [];
   for (const item of itemsRes.rows) {
     if (item.product_id === null) continue;
+    touchedIds.push(Number(item.product_id));
     await db.execute({
       sql: 'UPDATE products SET stock = MAX(stock - ?, 0) WHERE id = ?',
       args: [Number(item.qty), Number(item.product_id)],
@@ -54,9 +57,11 @@ export async function approveOrder(orderId: number, user: SessionUser): Promise<
   }
   const invoice = await nextInvoiceNumber();
   await db.execute({
-    sql: "UPDATE orders SET status = 'aprobado', invoice_number = ? WHERE id = ?",
-    args: [invoice, orderId],
+    sql: "UPDATE orders SET status = 'aprobado', invoice_number = ?, seller_name = ? WHERE id = ?",
+    args: [invoice, user.name, orderId],
   });
+  await notifyOrderStatus(orderId, 'aprobado');
+  await notifyAdminsLowStock(touchedIds);
   return true;
 }
 
@@ -71,6 +76,7 @@ export async function advanceOrder(
     sql: `UPDATE orders SET status = ? WHERE id = ? AND status IN ${from}`,
     args: [to, orderId],
   });
+  if (res.rowsAffected > 0) await notifyOrderStatus(orderId, to);
   return res.rowsAffected > 0;
 }
 
@@ -81,6 +87,7 @@ export async function rejectOrder(orderId: number): Promise<boolean> {
     sql: "UPDATE orders SET status = 'rechazado' WHERE id = ? AND status = 'pendiente'",
     args: [orderId],
   });
+  if (res.rowsAffected > 0) await notifyOrderStatus(orderId, 'rechazado');
   return res.rowsAffected > 0;
 }
 
@@ -124,6 +131,7 @@ export async function cancelOrder(orderId: number, user: SessionUser): Promise<b
     sql: "UPDATE orders SET status = 'cancelado' WHERE id = ?",
     args: [orderId],
   });
+  await notifyOrderStatus(orderId, 'cancelado');
   return true;
 }
 
@@ -170,12 +178,13 @@ export async function createManualSale(
   const orderRes = await db.execute({
     sql: `INSERT INTO orders
             (user_id, customer_name, customer_email, customer_phone, customer_ruc,
-             status, source, invoice_number, total)
-          VALUES (NULL, ?, '', ?, ?, 'aprobado', 'manual', ?, ?)`,
+             status, source, seller_name, invoice_number, total)
+          VALUES (NULL, ?, '', ?, ?, 'aprobado', 'manual', ?, ?, ?)`,
     args: [
       input.customerName || 'Consumidor final',
       input.customerPhone,
       input.customerRuc,
+      user.name,
       invoice,
       total,
     ],
@@ -200,6 +209,7 @@ export async function createManualSale(
       user.name
     );
   }
+  await notifyAdminsLowStock(items.map((i) => i.id));
   return { orderId };
 }
 

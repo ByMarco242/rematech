@@ -371,6 +371,7 @@ async function main() {
     "ALTER TABLE orders ADD COLUMN customer_ruc TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE orders ADD COLUMN source TEXT NOT NULL DEFAULT 'web'",
     'ALTER TABLE orders ADD COLUMN invoice_number INTEGER',
+    "ALTER TABLE orders ADD COLUMN seller_name TEXT NOT NULL DEFAULT ''",
     'ALTER TABLE products ADD COLUMN min_stock INTEGER NOT NULL DEFAULT 0',
   ];
   for (const m of migrations) {

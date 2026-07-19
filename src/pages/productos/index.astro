@@ -8,9 +8,17 @@ const db = await getDb();
 const q = Astro.url.searchParams.get('q')?.trim() ?? '';
 const categorySlug = Astro.url.searchParams.get('categoria') ?? '';
 const orden = Astro.url.searchParams.get('orden') ?? 'nuevo';
+const marca = Astro.url.searchParams.get('marca')?.trim() ?? '';
+const min = Math.max(Number(Astro.url.searchParams.get('min')) || 0, 0);
+const max = Math.max(Number(Astro.url.searchParams.get('max')) || 0, 0);
+const soloStock = Astro.url.searchParams.get('stock') === '1';
 
-const categoriesRes = await db.execute('SELECT * FROM categories ORDER BY name');
+const [categoriesRes, brandsRes] = await Promise.all([
+  db.execute('SELECT * FROM categories ORDER BY name'),
+  db.execute("SELECT DISTINCT brand FROM products WHERE brand != '' ORDER BY brand"),
+]);
 const categories = categoriesRes.rows as unknown as Category[];
+const brands = brandsRes.rows.map((r) => String(r.brand));
 
 let sql = `SELECT p.*, c.name AS category_name, c.slug AS category_slug
            FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE 1=1`;
@@ -24,6 +32,23 @@ if (categorySlug) {
   sql += ' AND c.slug = ?';
   args.push(categorySlug);
 }
+if (marca) {
+  sql += ' AND p.brand = ?';
+  args.push(marca);
+}
+if (min > 0) {
+  sql += ' AND p.price >= ?';
+  args.push(min);
+}
+if (max > 0) {
+  sql += ' AND p.price <= ?';
+  args.push(max);
+}
+if (soloStock) {
+  sql += ' AND p.stock > 0';
+}
+
+const hasFilters = Boolean(q || categorySlug || marca || min > 0 || max > 0 || soloStock);
 
 if (orden === 'precio-asc') sql += ' ORDER BY p.price ASC';
 else if (orden === 'precio-desc') sql += ' ORDER BY p.price DESC';
@@ -61,6 +86,17 @@ const products = productsRes.rows as unknown as Product[];
           <option value={c.slug} selected={c.slug === categorySlug}>{c.name}</option>
         ))}
       </select>
+      {brands.length > 0 && (
+        <select
+          name="marca"
+          class="rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:border-neutral-500"
+        >
+          <option value="">Todas las marcas</option>
+          {brands.map((b) => (
+            <option value={b} selected={b === marca}>{b}</option>
+          ))}
+        </select>
+      )}
       <select
         name="orden"
         class="rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:border-neutral-500"
@@ -69,12 +105,43 @@ const products = productsRes.rows as unknown as Product[];
         <option value="precio-asc" selected={orden === 'precio-asc'}>Menor precio</option>
         <option value="precio-desc" selected={orden === 'precio-desc'}>Mayor precio</option>
       </select>
+      <div class="flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm shadow-sm">
+        <span class="text-neutral-500">Gs.</span>
+        <input
+          type="number"
+          name="min"
+          value={min > 0 ? min : ''}
+          placeholder="Mínimo"
+          min="0"
+          step="100000"
+          class="w-24 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+        />
+        <span class="text-neutral-300">—</span>
+        <input
+          type="number"
+          name="max"
+          value={max > 0 ? max : ''}
+          placeholder="Máximo"
+          min="0"
+          step="100000"
+          class="w-24 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+        />
+      </div>
+      <label class="flex cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm shadow-sm">
+        <input type="checkbox" name="stock" value="1" checked={soloStock} class="accent-neutral-900" />
+        Solo con stock
+      </label>
       <button
         type="submit"
         class="cursor-pointer rounded-full bg-neutral-900 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-neutral-700"
       >
         Filtrar
       </button>
+      {hasFilters && (
+        <a href="/productos" class="text-sm font-semibold text-neutral-500 hover:text-neutral-900 hover:underline">
+          Limpiar filtros
+        </a>
+      )}
     </form>
 
     {products.length === 0 ? (

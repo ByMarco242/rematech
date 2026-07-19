@@ -18,7 +18,7 @@ export const GET: APIRoute = async ({ url }) => {
 
   const res = hasRange
     ? await db.execute({
-        sql: `SELECT o.id, o.invoice_number, o.created_at, o.status, o.customer_name, o.customer_email,
+        sql: `SELECT o.id, o.invoice_number, o.created_at, o.status, o.customer_name, o.customer_email, o.seller_name,
                      oi.product_name, oi.qty, oi.price, oi.cost
               FROM orders o JOIN order_items oi ON oi.order_id = o.id
               WHERE o.status IN ${SOLD_SQL} AND date(o.created_at) BETWEEN ? AND ?
@@ -26,7 +26,7 @@ export const GET: APIRoute = async ({ url }) => {
         args: [desde, hasta],
       })
     : await db.execute(
-        `SELECT o.id, o.invoice_number, o.created_at, o.status, o.customer_name, o.customer_email,
+        `SELECT o.id, o.invoice_number, o.created_at, o.status, o.customer_name, o.customer_email, o.seller_name,
                 oi.product_name, oi.qty, oi.price, oi.cost
          FROM orders o JOIN order_items oi ON oi.order_id = o.id
          WHERE o.status IN ${SOLD_SQL}
@@ -34,7 +34,7 @@ export const GET: APIRoute = async ({ url }) => {
       );
 
   const header = [
-    'pedido', 'comprobante', 'estado', 'fecha_utc', 'cliente', 'email', 'producto',
+    'pedido', 'comprobante', 'estado', 'fecha_utc', 'cliente', 'email', 'vendedor', 'producto',
     'cantidad', 'precio_unitario_gs', 'costo_unitario_gs',
     'subtotal_gs', 'ganancia_bruta_gs',
   ];
@@ -52,6 +52,7 @@ export const GET: APIRoute = async ({ url }) => {
         csvCell(r.created_at),
         csvCell(r.customer_name),
         csvCell(r.customer_email),
+        csvCell(r.seller_name),
         csvCell(r.product_name),
         qty,
         price,

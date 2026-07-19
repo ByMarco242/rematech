@@ -1,0 +1,211 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getDb, SOLD_SQL, type Order } from '../../lib/db';
+import { formatPrice } from '../../lib/util';
+
+const db = await getDb();
+
+// Clientes agrupados: registrados por user_id; de mostrador por nombre+teléfono
+const customersRes = await db.execute(
+  `SELECT
+     CASE WHEN user_id IS NOT NULL THEN 'u' || user_id
+          ELSE 'g' || customer_name || '|' || customer_phone END AS ckey,
+     user_id,
+     MAX(customer_name) AS name,
+     MAX(customer_email) AS email,
+     MAX(customer_phone) AS phone,
+     COUNT(*) AS orders_count,
+     SUM(CASE WHEN status IN ${SOLD_SQL} THEN 1 ELSE 0 END) AS sold_count,
+     COALESCE(SUM(CASE WHEN status IN ${SOLD_SQL} THEN total END), 0) AS spent,
+     MAX(created_at) AS last_order
+   FROM orders
+   GROUP BY ckey
+   ORDER BY spent DESC, orders_count DESC`
+);
+
+const customers = customersRes.rows.map((r) => ({
+  ckey: String(r.ckey),
+  userId: r.user_id === null ? null : Number(r.user_id),
+  name: String(r.name) || 'Consumidor final',
+  email: String(r.email),
+  phone: String(r.phone),
+  ordersCount: Number(r.orders_count),
+  soldCount: Number(r.sold_count),
+  spent: Number(r.spent),
+  lastOrder: String(r.last_order),
+}));
+
+const totalSpent = customers.reduce((acc, c) => acc + c.spent, 0);
+
+// Detalle de un cliente registrado (?u=id)
+const detailId = Number(Astro.url.searchParams.get('u'));
+let detail: {
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  since: string;
+  orders: Order[];
+} | null = null;
+
+if (Number.isInteger(detailId) && detailId > 0) {
+  const [userRes, ordersRes] = await Promise.all([
+    db.execute({
+      sql: 'SELECT name, email, phone, address, created_at FROM users WHERE id = ?',
+      args: [detailId],
+    }),
+    db.execute({
+      sql: 'SELECT * FROM orders WHERE user_id = ? ORDER BY id DESC LIMIT 50',
+      args: [detailId],
+    }),
+  ]);
+  const u = userRes.rows[0];
+  if (u) {
+    detail = {
+      name: String(u.name),
+      email: String(u.email),
+      phone: String(u.phone),
+      address: String(u.address),
+      since: String(u.created_at),
+      orders: ordersRes.rows as unknown as Order[],
+    };
+  }
+}
+
+const statusStyle: Record<string, string> = {
+  pendiente: 'bg-amber-50 text-amber-600',
+  aprobado: 'bg-emerald-50 text-emerald-600',
+  enviado: 'bg-sky-50 text-sky-600',
+  entregado: 'bg-emerald-100 text-emerald-700',
+  cancelado: 'bg-neutral-100 text-neutral-500',
+  rechazado: 'bg-rose-50 text-rose-600',
+};
+
+const dateFmt = new Intl.DateTimeFormat('es-PY', {
+  dateStyle: 'short',
+  timeZone: 'America/Asuncion',
+});
+function formatDate(sqlDate: string): string {
+  return dateFmt.format(new Date(sqlDate.replace(' ', 'T') + 'Z'));
+}
+---
+
+<AdminLayout title="Clientes — NoteStore admin">
+  <div>
+    <h1 class="text-2xl font-bold tracking-tight">Clientes</h1>
+    <p class="mt-1 text-sm text-neutral-500">
+      Quiénes te compran, cuánto y cuándo fue su último pedido. Solo cuentan las ventas concretadas.
+    </p>
+  </div>
+
+  {detail && (
+    <section class="mt-8 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-bold">{detail.name}</h2>
+          <p class="text-sm text-neutral-500">{detail.email}</p>
+          {detail.phone && <p class="text-sm text-neutral-500">📞 {detail.phone}</p>}
+          {detail.address && <p class="text-sm text-neutral-500">📍 {detail.address}</p>}
+          <p class="mt-1 text-xs text-neutral-400">Cliente desde {formatDate(detail.since)}</p>
+        </div>
+        <a href="/admin/clientes" class="text-sm font-semibold text-neutral-500 hover:text-neutral-900 hover:underline">
+          ← Volver a la lista
+        </a>
+      </div>
+
+      {detail.orders.length === 0 ? (
+        <p class="mt-6 text-sm text-neutral-500">Todavía no hizo ningún pedido.</p>
+      ) : (
+        <table class="mt-6 w-full text-sm">
+          <thead class="border-b border-neutral-200 text-left text-xs text-neutral-500 uppercase">
+            <tr>
+              <th class="py-2 font-medium">Pedido</th>
+              <th class="py-2 font-medium">Fecha</th>
+              <th class="py-2 font-medium">Estado</th>
+              <th class="py-2 text-right font-medium">Total</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-neutral-100">
+            {detail.orders.map((o) => (
+              <tr>
+                <td class="py-2.5 font-semibold">#{o.id}</td>
+                <td class="py-2.5 text-neutral-500">{formatDate(o.created_at)}</td>
+                <td class="py-2.5">
+                  <span class:list={['rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize', statusStyle[o.status]]}>
+                    {o.status}
+                  </span>
+                </td>
+                <td class="py-2.5 text-right font-semibold">{formatPrice(o.total)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  )}
+
+  <div class="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-3">
+    <div class="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <p class="text-sm text-neutral-500">Clientes con pedidos</p>
+      <p class="mt-1 text-3xl font-extrabold">{customers.length}</p>
+    </div>
+    <div class="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <p class="text-sm text-neutral-500">Compraron al menos una vez</p>
+      <p class="mt-1 text-3xl font-extrabold">{customers.filter((c) => c.soldCount > 0).length}</p>
+    </div>
+    <div class="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm max-lg:col-span-2">
+      <p class="text-sm text-neutral-500">Facturación total</p>
+      <p class="mt-1 text-3xl font-extrabold">{formatPrice(totalSpent)}</p>
+    </div>
+  </div>
+
+  <div class="mt-6 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+    {customers.length === 0 ? (
+      <p class="p-10 text-center text-neutral-500">Todavía no hay pedidos, así que no hay clientes que mostrar.</p>
+    ) : (
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="border-b border-neutral-200 bg-neutral-50 text-left text-xs text-neutral-500 uppercase">
+            <tr>
+              <th class="px-5 py-3 font-medium">Cliente</th>
+              <th class="px-5 py-3 font-medium max-md:hidden">Contacto</th>
+              <th class="px-5 py-3 text-right font-medium">Compras</th>
+              <th class="px-5 py-3 text-right font-medium">Total gastado</th>
+              <th class="px-5 py-3 text-right font-medium max-md:hidden">Último pedido</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-neutral-100">
+            {customers.map((c) => (
+              <tr class="transition-colors hover:bg-neutral-50">
+                <td class="px-5 py-3">
+                  {c.userId ? (
+                    <a href={`/admin/clientes?u=${c.userId}`} class="font-semibold hover:underline">
+                      {c.name}
+                    </a>
+                  ) : (
+                    <span class="font-semibold">{c.name}</span>
+                  )}
+                  {!c.userId && (
+                    <span class="ml-2 rounded-full bg-neutral-900 px-2 py-0.5 text-[10px] font-semibold text-white">Mostrador</span>
+                  )}
+                </td>
+                <td class="px-5 py-3 text-neutral-500 max-md:hidden">
+                  {c.email || c.phone || '—'}
+                  {c.email && c.phone && <span class="text-neutral-400"> · {c.phone}</span>}
+                </td>
+                <td class="px-5 py-3 text-right">
+                  {c.soldCount}
+                  {c.ordersCount > c.soldCount && (
+                    <span class="text-xs text-neutral-400"> / {c.ordersCount} pedidos</span>
+                  )}
+                </td>
+                <td class="px-5 py-3 text-right font-semibold">{formatPrice(c.spent)}</td>
+                <td class="px-5 py-3 text-right text-neutral-500 max-md:hidden">{formatDate(c.lastOrder)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+</AdminLayout>

@@ -6,12 +6,21 @@ import '../styles/global.css';
 interface Props {
   title?: string;
   description?: string;
+  /** Imagen para vista previa al compartir (Open Graph); URL absoluta o relativa */
+  image?: string;
+  /** Tipo Open Graph: 'website' (default) o 'product' */
+  ogType?: string;
 }
 
 const {
   title = 'NoteStore — Tienda de Notebooks',
   description = 'Las mejores notebooks del mercado: gaming, ultrabooks, empresariales y más. Envíos a todo el país.',
+  image,
+  ogType = 'website',
 } = Astro.props;
+
+const canonical = new URL(Astro.url.pathname, Astro.url.origin).href;
+const ogImage = image ? new URL(image, Astro.url.origin).href : null;
 ---
 
 <!doctype html>
@@ -21,6 +30,18 @@ const {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content={ogType} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:site_name" content="NoteStore" />
+    <meta property="og:locale" content="es_PY" />
+    {ogImage && <meta property="og:image" content={ogImage} />}
+    <meta name="twitter:card" content={ogImage ? 'summary_large_image' : 'summary'} />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    {ogImage && <meta name="twitter:image" content={ogImage} />}
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💻</text></svg>" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
