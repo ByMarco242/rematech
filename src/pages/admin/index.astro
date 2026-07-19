@@ -1,9 +1,10 @@
 ---
 import AdminLayout from '../../layouts/AdminLayout.astro';
-import { getDb, type Product } from '../../lib/db';
+import { getDb, SOLD_SQL, type Product } from '../../lib/db';
 import { formatPrice } from '../../lib/util';
 
 const db = await getDb();
+const user = Astro.locals.user;
 
 const [prodCount, catCount, pendingOrders, noStock, recentRes] = await Promise.all([
   db.execute('SELECT COUNT(*) AS n FROM products'),
@@ -37,7 +38,59 @@ const stats = [
 ];
 
 const recent = recentRes.rows as unknown as Product[];
-const user = Astro.locals.user;
+
+// Vistazo rápido de métricas: solo para el admin (los empleados no acceden a Métricas)
+let quick: {
+  monthRevenue: number;
+  monthSales: number;
+  totalRevenue: number;
+  netProfit: number;
+  avgTicket: number;
+  months: { label: string; revenue: number }[];
+  maxMonthly: number;
+} | null = null;
+
+if (user?.is_admin) {
+  const [salesRes, profitRes, expensesRes, monthlyRes] = await Promise.all([
+    db.execute(
+      `SELECT COALESCE(SUM(total), 0) AS revenue, COALESCE(AVG(total), 0) AS avg_ticket,
+              COALESCE(SUM(CASE WHEN created_at >= date('now', 'start of month') THEN total END), 0) AS month_revenue,
+              SUM(CASE WHEN created_at >= date('now', 'start of month') THEN 1 ELSE 0 END) AS month_sales
+       FROM orders WHERE status IN ${SOLD_SQL}`
+    ),
+    db.execute(
+      `SELECT COALESCE(SUM(CASE WHEN oi.cost > 0 THEN (oi.price - oi.cost) * oi.qty END), 0) AS gross_profit
+       FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.status IN ${SOLD_SQL}`
+    ),
+    db.execute(`SELECT COALESCE(SUM(amount), 0) AS total FROM expenses`),
+    db.execute(
+      `SELECT strftime('%Y-%m', created_at) AS ym, COALESCE(SUM(total), 0) AS revenue
+       FROM orders WHERE status IN ${SOLD_SQL} AND created_at >= date('now', 'start of month', '-5 months')
+       GROUP BY ym`
+    ),
+  ]);
+
+  const monthlyMap = new Map(monthlyRes.rows.map((r) => [String(r.ym), Number(r.revenue)]));
+  const monthFmt = new Intl.DateTimeFormat('es-PY', { month: 'short' });
+  const months: { label: string; revenue: number }[] = [];
+  const now = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const ym = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    months.push({ label: monthFmt.format(d), revenue: monthlyMap.get(ym) ?? 0 });
+  }
+
+  const sales = salesRes.rows[0];
+  quick = {
+    monthRevenue: Number(sales.month_revenue),
+    monthSales: Number(sales.month_sales ?? 0),
+    totalRevenue: Number(sales.revenue),
+    netProfit: Number(profitRes.rows[0].gross_profit) - Number(expensesRes.rows[0].total),
+    avgTicket: Math.round(Number(sales.avg_ticket)),
+    months,
+    maxMonthly: Math.max(...months.map((m) => m.revenue), 1),
+  };
+}
 ---
 
 <AdminLayout title="Dashboard — NoteStore admin">
@@ -69,6 +122,57 @@ const user = Astro.locals.user;
       </a>
     ))}
   </div>
+
+  {quick && (
+    <section class="mt-10">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-bold">Métricas</h2>
+        <a href="/admin/metricas" class="text-sm font-semibold text-neutral-900 hover:underline">Ver completas</a>
+      </div>
+
+      <div class="mt-4 grid gap-4 lg:grid-cols-3">
+        <div class="grid grid-cols-2 gap-4 lg:col-span-2">
+          <div class="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+            <p class="text-sm text-neutral-500">Ingresos del mes</p>
+            <p class="mt-1 text-2xl font-extrabold">{formatPrice(quick.monthRevenue)}</p>
+            <p class="mt-1 text-xs text-neutral-400">
+              {quick.monthSales} {quick.monthSales === 1 ? 'venta' : 'ventas'}
+            </p>
+          </div>
+          <div class="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+            <p class="text-sm text-neutral-500">Ganancia neta</p>
+            <p class:list={['mt-1 text-2xl font-extrabold', quick.netProfit < 0 ? 'text-rose-600' : '']}>
+              {formatPrice(quick.netProfit)}
+            </p>
+            <p class="mt-1 text-xs text-neutral-400">bruta − gastos, histórico</p>
+          </div>
+          <div class="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+            <p class="text-sm text-neutral-500">Ingresos totales</p>
+            <p class="mt-1 text-2xl font-extrabold">{formatPrice(quick.totalRevenue)}</p>
+          </div>
+          <div class="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+            <p class="text-sm text-neutral-500">Ticket promedio</p>
+            <p class="mt-1 text-2xl font-extrabold">{formatPrice(quick.avgTicket)}</p>
+          </div>
+        </div>
+
+        <div class="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+          <p class="text-sm text-neutral-500">Ingresos últimos 6 meses</p>
+          <div class="mt-4 flex h-28 items-end gap-2">
+            {quick.months.map((m) => (
+              <div class="flex flex-1 flex-col items-center gap-1.5" title={formatPrice(m.revenue)}>
+                <div
+                  class="w-full rounded-t-md bg-neutral-900 transition-all"
+                  style={`height: ${Math.max(Math.round((m.revenue / quick!.maxMonthly) * 100), m.revenue > 0 ? 4 : 2)}%`}
+                ></div>
+                <span class="text-[10px] text-neutral-400">{m.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  )}
 
   <section class="mt-10">
     <div class="flex items-center justify-between">
