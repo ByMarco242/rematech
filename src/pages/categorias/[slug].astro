@@ -2,8 +2,10 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import ProductCard from '../../components/ProductCard.astro';
 import { getDb, type Product, type Category } from '../../lib/db';
+import { getWishlistedIds } from '../../lib/wishlist';
 
 const db = await getDb();
+const wishlistedIds = Astro.locals.user ? await getWishlistedIds(Astro.locals.user.id) : new Set<number>();
 const { slug } = Astro.params;
 
 const catRes = await db.execute({
@@ -52,7 +54,7 @@ const products = productsRes.rows as unknown as Product[];
     ) : (
       <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4" data-reveal-group>
         {products.map((p) => (
-          <ProductCard product={p} />
+          <ProductCard product={p} wishlisted={wishlistedIds.has(p.id)} />
         ))}
       </div>
     )}

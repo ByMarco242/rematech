@@ -2,7 +2,15 @@
 import AdminLayout from '../../../layouts/AdminLayout.astro';
 import ProductForm from '../../../components/ProductForm.astro';
 import { getDb, type Category, type Product } from '../../../lib/db';
-import { parseProductForm, uniqueProductSlug } from '../../../lib/products';
+import {
+  parseProductForm,
+  uniqueProductSlug,
+  saveProductImages,
+  saveProductVariants,
+  parseVariantsForm,
+  getProductImages,
+  getProductVariants,
+} from '../../../lib/products';
 
 const db = await getDb();
 const id = Number(Astro.params.id);
@@ -29,6 +37,9 @@ if (Astro.request.method === 'POST') {
         d.category_id, d.cpu, d.ram, d.storage, d.screen, d.stock, d.min_stock, d.featured, id,
       ],
     });
+    const extraImages = String(form.get('extra_images') ?? '').split('\n');
+    await saveProductImages(id, extraImages);
+    await saveProductVariants(id, parseVariantsForm(form));
     return Astro.redirect('/admin/productos');
   }
 }
@@ -39,6 +50,8 @@ if (!product) return Astro.redirect('/admin/productos');
 
 const categoriesRes = await db.execute('SELECT * FROM categories ORDER BY name');
 const categories = categoriesRes.rows as unknown as Category[];
+const images = await getProductImages(id);
+const variants = await getProductVariants(id);
 ---
 
 <AdminLayout title={`Editar ${product.name} — NoteStore admin`}>
@@ -51,5 +64,5 @@ const categories = categoriesRes.rows as unknown as Category[];
       Ver en la tienda ↗
     </a>
   </div>
-  <ProductForm product={product} categories={categories} error={error} submitLabel="Guardar cambios" />
+  <ProductForm product={product} categories={categories} error={error} submitLabel="Guardar cambios" images={images} variants={variants} />
 </AdminLayout>

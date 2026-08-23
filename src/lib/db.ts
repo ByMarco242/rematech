@@ -117,6 +117,56 @@ const SCHEMA = [
     cost REAL NOT NULL DEFAULT 0,
     qty INTEGER NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS coupons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    type TEXT NOT NULL DEFAULT 'percent',
+    value REAL NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    min_total REAL NOT NULL DEFAULT 0,
+    max_uses INTEGER,
+    used_count INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    rating INTEGER NOT NULL,
+    comment TEXT NOT NULL DEFAULT '',
+    approved INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_reviews_product ON reviews (product_id, approved)`,
+  `CREATE TABLE IF NOT EXISTS wishlist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, product_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS product_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    image_url TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  )`,
+  `CREATE TABLE IF NOT EXISTS product_variants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    value TEXT NOT NULL,
+    price_delta REAL NOT NULL DEFAULT 0,
+    stock INTEGER NOT NULL DEFAULT 0,
+    sku TEXT NOT NULL DEFAULT ''
+  )`,
+  `CREATE TABLE IF NOT EXISTS shipping_zones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    cost REAL NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1
+  )`,
 ];
 
 export async function getDb(): Promise<Client> {
@@ -137,6 +187,13 @@ export async function getDb(): Promise<Client> {
         'ALTER TABLE orders ADD COLUMN invoice_number INTEGER',
         'ALTER TABLE products ADD COLUMN min_stock INTEGER NOT NULL DEFAULT 0',
         "ALTER TABLE orders ADD COLUMN seller_name TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE orders ADD COLUMN coupon_code TEXT NOT NULL DEFAULT ''",
+        'ALTER TABLE orders ADD COLUMN discount REAL NOT NULL DEFAULT 0',
+        "ALTER TABLE orders ADD COLUMN shipping_zone TEXT NOT NULL DEFAULT ''",
+        'ALTER TABLE orders ADD COLUMN shipping_cost REAL NOT NULL DEFAULT 0',
+        "ALTER TABLE orders ADD COLUMN tracking_code TEXT NOT NULL DEFAULT ''",
+        'ALTER TABLE order_items ADD COLUMN variant_id INTEGER',
+        "ALTER TABLE order_items ADD COLUMN variant_label TEXT NOT NULL DEFAULT ''",
       ];
       for (const m of migrations) {
         try {
@@ -186,6 +243,11 @@ export interface Order {
   seller_name: string;
   invoice_number: number | null;
   total: number;
+  coupon_code: string;
+  discount: number;
+  shipping_zone: string;
+  shipping_cost: number;
+  tracking_code: string;
   created_at: string;
 }
 
@@ -197,6 +259,8 @@ export interface OrderItem {
   price: number;
   cost: number;
   qty: number;
+  variant_id: number | null;
+  variant_label: string;
 }
 
 export interface Product {
@@ -220,4 +284,59 @@ export interface Product {
   created_at: string;
   category_name?: string;
   category_slug?: string;
+}
+
+export interface Coupon {
+  id: number;
+  code: string;
+  type: 'percent' | 'fixed';
+  value: number;
+  active: number;
+  min_total: number;
+  max_uses: number | null;
+  used_count: number;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export interface Review {
+  id: number;
+  product_id: number;
+  user_id: number;
+  rating: number;
+  comment: string;
+  approved: number;
+  created_at: string;
+  user_name?: string;
+}
+
+export interface WishlistItem {
+  id: number;
+  user_id: number;
+  product_id: number;
+  created_at: string;
+}
+
+export interface ProductImage {
+  id: number;
+  product_id: number;
+  image_url: string;
+  sort_order: number;
+}
+
+export interface ProductVariant {
+  id: number;
+  product_id: number;
+  name: string;
+  value: string;
+  price_delta: number;
+  stock: number;
+  sku: string;
+}
+
+export interface ShippingZone {
+  id: number;
+  name: string;
+  cost: number;
+  active: number;
 }

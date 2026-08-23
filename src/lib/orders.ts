@@ -36,17 +36,24 @@ export async function approveOrder(orderId: number, user: SessionUser): Promise<
   if (!orderRes.rows[0] || String(orderRes.rows[0].status) !== 'pendiente') return false;
 
   const itemsRes = await db.execute({
-    sql: 'SELECT product_id, product_name, qty FROM order_items WHERE order_id = ?',
+    sql: 'SELECT product_id, product_name, qty, variant_id FROM order_items WHERE order_id = ?',
     args: [orderId],
   });
   const touchedIds: number[] = [];
   for (const item of itemsRes.rows) {
     if (item.product_id === null) continue;
     touchedIds.push(Number(item.product_id));
-    await db.execute({
-      sql: 'UPDATE products SET stock = MAX(stock - ?, 0) WHERE id = ?',
-      args: [Number(item.qty), Number(item.product_id)],
-    });
+    if (item.variant_id !== null) {
+      await db.execute({
+        sql: 'UPDATE product_variants SET stock = MAX(stock - ?, 0) WHERE id = ?',
+        args: [Number(item.qty), Number(item.variant_id)],
+      });
+    } else {
+      await db.execute({
+        sql: 'UPDATE products SET stock = MAX(stock - ?, 0) WHERE id = ?',
+        args: [Number(item.qty), Number(item.product_id)],
+      });
+    }
     await recordStockMove(
       Number(item.product_id),
       String(item.product_name),
@@ -80,6 +87,15 @@ export async function advanceOrder(
   return res.rowsAffected > 0;
 }
 
+/** Guarda el código de seguimiento de un pedido (independiente del cambio de estado) */
+export async function setOrderTracking(orderId: number, trackingCode: string): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: 'UPDATE orders SET tracking_code = ? WHERE id = ?',
+    args: [trackingCode.trim().slice(0, 100), orderId],
+  });
+}
+
 /** pendiente → rechazado (no toca stock) */
 export async function rejectOrder(orderId: number): Promise<boolean> {
   const db = await getDb();
@@ -109,15 +125,22 @@ export async function cancelOrder(orderId: number, user: SessionUser): Promise<b
 
   if (wasSold) {
     const itemsRes = await db.execute({
-      sql: 'SELECT product_id, product_name, qty FROM order_items WHERE order_id = ?',
+      sql: 'SELECT product_id, product_name, qty, variant_id FROM order_items WHERE order_id = ?',
       args: [orderId],
     });
     for (const item of itemsRes.rows) {
       if (item.product_id === null) continue;
-      await db.execute({
-        sql: 'UPDATE products SET stock = stock + ? WHERE id = ?',
-        args: [Number(item.qty), Number(item.product_id)],
-      });
+      if (item.variant_id !== null) {
+        await db.execute({
+          sql: 'UPDATE product_variants SET stock = stock + ? WHERE id = ?',
+          args: [Number(item.qty), Number(item.variant_id)],
+        });
+      } else {
+        await db.execute({
+          sql: 'UPDATE products SET stock = stock + ? WHERE id = ?',
+          args: [Number(item.qty), Number(item.product_id)],
+        });
+      }
       await recordStockMove(
         Number(item.product_id),
         String(item.product_name),

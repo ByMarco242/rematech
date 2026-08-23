@@ -10,6 +10,9 @@ const ADMIN_ONLY = [
   '/admin/gastos',
   '/admin/clientes',
   '/admin/configuracion',
+  '/admin/cupones',
+  '/admin/resenas',
+  '/admin/envios',
 ];
 
 const CSP = [

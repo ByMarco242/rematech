@@ -2,7 +2,7 @@
 import AdminLayout from '../../../layouts/AdminLayout.astro';
 import ProductForm from '../../../components/ProductForm.astro';
 import { getDb, type Category } from '../../../lib/db';
-import { parseProductForm, uniqueProductSlug } from '../../../lib/products';
+import { parseProductForm, uniqueProductSlug, saveProductImages, saveProductVariants, parseVariantsForm } from '../../../lib/products';
 
 const db = await getDb();
 
@@ -18,7 +18,7 @@ if (Astro.request.method === 'POST') {
   } else {
     const d = parsed.data;
     const slug = await uniqueProductSlug(d.name);
-    await db.execute({
+    const insertRes = await db.execute({
       sql: `INSERT INTO products
               (name, slug, brand, description, price, old_price, cost, image_url,
                category_id, cpu, ram, storage, screen, stock, min_stock, featured)
@@ -28,6 +28,10 @@ if (Astro.request.method === 'POST') {
         d.category_id, d.cpu, d.ram, d.storage, d.screen, d.stock, d.min_stock, d.featured,
       ],
     });
+    const newId = Number(insertRes.lastInsertRowid);
+    const extraImages = String(form.get('extra_images') ?? '').split('\n');
+    await saveProductImages(newId, extraImages);
+    await saveProductVariants(newId, parseVariantsForm(form));
     return Astro.redirect('/admin/productos');
   }
 }

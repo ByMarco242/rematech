@@ -1,6 +1,10 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import { getDb, type ShippingZone } from '../lib/db';
 const user = Astro.locals.user;
+const db = await getDb();
+const zonesRes = await db.execute('SELECT * FROM shipping_zones WHERE active = 1 ORDER BY name');
+const zones = zonesRes.rows as unknown as ShippingZone[];
 ---
 
 <BaseLayout title="Mi carrito — NoteStore">
@@ -19,7 +23,46 @@ const user = Astro.locals.user;
       <ul id="cart-items" class="space-y-4"></ul>
 
       <div class="mt-8 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
-        <div class="flex items-center justify-between text-lg">
+        <div class="flex gap-2">
+          <input
+            id="coupon-input"
+            type="text"
+            placeholder="Código de cupón"
+            class="flex-1 rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm uppercase outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+          />
+          <button id="coupon-apply" type="button" class="cursor-pointer rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold hover:bg-neutral-50">
+            Aplicar
+          </button>
+        </div>
+        <p id="coupon-msg" class="mt-2 text-sm"></p>
+
+        {zones.length > 0 && (
+          <div class="mt-4">
+            <label for="zone-select" class="mb-1.5 block text-sm font-medium text-neutral-700">Envío</label>
+            <select id="zone-select" class="w-full rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200">
+              <option value="">Retiro en local (sin costo)</option>
+              {zones.map((z) => (
+                <option value={z.id} data-cost={z.cost}>{z.name} — {new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', maximumFractionDigits: 0 }).format(z.cost)}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div class="mt-5 space-y-1 text-sm">
+          <div class="flex items-center justify-between">
+            <span class="text-neutral-500">Subtotal</span>
+            <span id="cart-subtotal" class="font-medium"></span>
+          </div>
+          <div id="discount-row" class="hidden flex items-center justify-between text-emerald-600">
+            <span>Descuento</span>
+            <span id="cart-discount"></span>
+          </div>
+          <div id="shipping-row" class="hidden flex items-center justify-between">
+            <span class="text-neutral-500">Envío</span>
+            <span id="cart-shipping"></span>
+          </div>
+        </div>
+        <div class="mt-3 flex items-center justify-between border-t border-neutral-100 pt-3 text-lg">
           <span class="font-medium text-neutral-600">Total</span>
           <span id="cart-total" class="text-2xl font-extrabold"></span>
         </div>
@@ -60,6 +103,7 @@ const user = Astro.locals.user;
       <img data-el="image" class="size-20 rounded-xl object-cover" alt="" />
       <div class="min-w-0 flex-1">
         <a data-el="name" class="block truncate font-semibold hover:text-neutral-500"></a>
+        <p data-el="variant" class="text-xs text-neutral-400"></p>
         <p data-el="price" class="mt-0.5 text-sm text-neutral-500"></p>
       </div>
       <div class="flex items-center gap-1 rounded-full border border-neutral-200 px-1">
@@ -81,6 +125,19 @@ const user = Astro.locals.user;
       maximumFractionDigits: 0,
     });
 
+    let appliedCoupon = null; // { code, discount }
+
+    function subtotalOf(cart) {
+      return cart.reduce((acc, i) => acc + i.price * i.qty, 0);
+    }
+
+    function shippingCost() {
+      const sel = document.getElementById('zone-select');
+      if (!sel || !sel.value) return 0;
+      const opt = sel.options[sel.selectedIndex];
+      return Number(opt.dataset.cost || 0);
+    }
+
     function render() {
       const cart = window.NoteStoreCart.get();
       const empty = document.getElementById('cart-empty');
@@ -92,35 +149,78 @@ const user = Astro.locals.user;
       content.classList.toggle('hidden', cart.length === 0);
       list.innerHTML = '';
 
-      let total = 0;
       for (const item of cart) {
-        total += item.price * item.qty;
         const node = tpl.content.cloneNode(true);
         const el = (name) => node.querySelector(`[data-el="${name}"]`);
         el('image').src = item.image;
         el('image').alt = item.name;
         el('name').textContent = item.name;
         el('name').href = `/productos/${item.slug}`;
+        el('variant').textContent = item.variantLabel || '';
         el('price').textContent = fmt.format(item.price) + ' c/u';
         el('qty').textContent = item.qty;
         el('subtotal').textContent = fmt.format(item.price * item.qty);
         el('minus').addEventListener('click', () => {
-          if (item.qty <= 1) window.NoteStoreCart.remove(item.id);
-          else window.NoteStoreCart.setQty(item.id, item.qty - 1);
+          if (item.qty <= 1) window.NoteStoreCart.remove(item.id, item.variantId);
+          else window.NoteStoreCart.setQty(item.id, item.qty - 1, item.variantId);
           render();
         });
         el('plus').addEventListener('click', () => {
-          window.NoteStoreCart.setQty(item.id, item.qty + 1);
+          window.NoteStoreCart.setQty(item.id, item.qty + 1, item.variantId);
           render();
         });
         el('remove').addEventListener('click', () => {
-          window.NoteStoreCart.remove(item.id);
+          window.NoteStoreCart.remove(item.id, item.variantId);
           render();
         });
         list.appendChild(node);
       }
+
+      const subtotal = subtotalOf(cart);
+      const discount = appliedCoupon ? appliedCoupon.discount : 0;
+      const shipping = shippingCost();
+      const total = Math.max(subtotal - discount, 0) + shipping;
+
+      document.getElementById('cart-subtotal').textContent = fmt.format(subtotal);
+      const discountRow = document.getElementById('discount-row');
+      if (discountRow) {
+        discountRow.classList.toggle('hidden', discount <= 0);
+        document.getElementById('cart-discount').textContent = `-${fmt.format(discount)}`;
+      }
+      const shippingRow = document.getElementById('shipping-row');
+      if (shippingRow) {
+        shippingRow.classList.toggle('hidden', shipping <= 0);
+        document.getElementById('cart-shipping').textContent = fmt.format(shipping);
+      }
       document.getElementById('cart-total').textContent = fmt.format(total);
     }
+
+    const couponBtn = document.getElementById('coupon-apply');
+    if (couponBtn) {
+      couponBtn.addEventListener('click', async () => {
+        const input = document.getElementById('coupon-input');
+        const msg = document.getElementById('coupon-msg');
+        const code = input.value.trim();
+        if (!code) return;
+        const subtotal = subtotalOf(window.NoteStoreCart.get());
+        try {
+          const res = await fetch(`/api/cupon?code=${encodeURIComponent(code)}&subtotal=${subtotal}`);
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Cupón inválido.');
+          appliedCoupon = { code: data.code, discount: data.discount };
+          msg.textContent = `Cupón «${data.code}» aplicado ✓`;
+          msg.className = 'mt-2 text-sm text-emerald-600';
+        } catch (err) {
+          appliedCoupon = null;
+          msg.textContent = err.message;
+          msg.className = 'mt-2 text-sm text-rose-600';
+        }
+        render();
+      });
+    }
+
+    const zoneSelect = document.getElementById('zone-select');
+    if (zoneSelect) zoneSelect.addEventListener('change', render);
 
     const checkoutBtn = document.getElementById('checkout-btn');
     checkoutBtn.addEventListener('click', async () => {
@@ -128,7 +228,7 @@ const user = Astro.locals.user;
         window.location.href = '/login?next=/carrito';
         return;
       }
-      const items = window.NoteStoreCart.get().map((i) => ({ id: i.id, qty: i.qty }));
+      const items = window.NoteStoreCart.get().map((i) => ({ id: i.id, qty: i.qty, variantId: i.variantId }));
       if (items.length === 0) return;
 
       checkoutBtn.disabled = true;
@@ -137,7 +237,11 @@ const user = Astro.locals.user;
         const res = await fetch('/api/pedidos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items }),
+          body: JSON.stringify({
+            items,
+            couponCode: appliedCoupon ? appliedCoupon.code : undefined,
+            shippingZoneId: zoneSelect && zoneSelect.value ? Number(zoneSelect.value) : undefined,
+          }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'No se pudo registrar el pedido.');

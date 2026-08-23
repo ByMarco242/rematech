@@ -114,6 +114,16 @@ body {
   animation: btn-pop 0.3s ease;
 }
 
+.wishlist-btn svg {
+  fill: none;
+}
+.wishlist-btn.is-wishlisted {
+  color: #f43f5e;
+}
+.wishlist-btn.is-wishlisted svg {
+  fill: currentColor;
+}
+
 button,
 a {
   -webkit-tap-highlight-color: transparent;

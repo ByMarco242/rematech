@@ -76,17 +76,23 @@ const ogImage = image ? new URL(image, origin).href : null;
         },
         add(product) {
           const items = this.get();
-          const found = items.find((i) => i.id === product.id);
+          const found = items.find(
+            (i) => i.id === product.id && (i.variantId ?? null) === (product.variantId ?? null)
+          );
           if (found) found.qty += 1;
           else items.push({ ...product, qty: 1 });
           this.save(items);
         },
-        remove(id) {
-          this.save(this.get().filter((i) => i.id !== id));
+        remove(id, variantId) {
+          this.save(
+            this.get().filter((i) => !(i.id === id && (i.variantId ?? null) === (variantId ?? null)))
+          );
         },
-        setQty(id, qty) {
+        setQty(id, qty, variantId) {
           const items = this.get();
-          const found = items.find((i) => i.id === id);
+          const found = items.find(
+            (i) => i.id === id && (i.variantId ?? null) === (variantId ?? null)
+          );
           if (!found) return;
           found.qty = Math.max(1, qty);
           this.save(items);
@@ -126,6 +132,32 @@ const ogImage = image ? new URL(image, origin).href : null;
         void btn.offsetWidth;
         btn.classList.add('btn-pop');
         window.showToast('Agregado al carrito ✓');
+      });
+
+      document.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-wishlist-toggle]');
+        if (!btn) return;
+        e.preventDefault();
+        const productId = Number(btn.getAttribute('data-wishlist-toggle'));
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/wishlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productId }),
+          });
+          if (res.status === 401) {
+            window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
+            return;
+          }
+          const data = await res.json();
+          btn.classList.toggle('is-wishlisted', Boolean(data.wishlisted));
+          window.showToast(data.wishlisted ? 'Agregado a favoritos ✓' : 'Quitado de favoritos');
+        } catch {
+          window.showToast('No se pudo actualizar favoritos.');
+        } finally {
+          btn.disabled = false;
+        }
       });
 
       window.NoteStoreCart.updateBadge();
