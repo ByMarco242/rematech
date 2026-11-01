@@ -1,12 +1,6 @@
 import type { APIRoute } from 'astro';
-import { getDb, SOLD_SQL } from '../../lib/db';
-
-function csvCell(value: unknown): string {
-  const s = String(value ?? '');
-  // Neutraliza inyección de fórmulas en Excel/Sheets y escapa comillas
-  const safe = /^[=+\-@]/.test(s) ? `'${s}` : s;
-  return `"${safe.replace(/"/g, '""')}"`;
-}
+import { getDb, SOLD_SQL, PAYMENT_METHODS, isPaymentMethod } from '../../lib/db';
+import { csvResponse } from '../../lib/csv';
 
 export const GET: APIRoute = async ({ url }) => {
   const db = await getDb();
@@ -16,58 +10,46 @@ export const GET: APIRoute = async ({ url }) => {
   const hasta = url.searchParams.get('hasta') ?? '';
   const hasRange = DATE_RE.test(desde) && DATE_RE.test(hasta);
 
+  const select = `SELECT o.id, o.invoice_number, datetime(o.created_at, '-3 hours') AS fecha, o.status, o.source,
+                         o.payment_method, o.customer_name, o.customer_email, o.seller_name,
+                         oi.product_name, oi.qty, oi.price, oi.cost
+                  FROM orders o JOIN order_items oi ON oi.order_id = o.id
+                  WHERE o.status IN ${SOLD_SQL}`;
   const res = hasRange
     ? await db.execute({
-        sql: `SELECT o.id, o.invoice_number, o.created_at, o.status, o.customer_name, o.customer_email, o.seller_name,
-                     oi.product_name, oi.qty, oi.price, oi.cost
-              FROM orders o JOIN order_items oi ON oi.order_id = o.id
-              WHERE o.status IN ${SOLD_SQL} AND date(o.created_at) BETWEEN ? AND ?
-              ORDER BY o.created_at DESC, o.id DESC`,
+        sql: `${select} AND date(o.created_at, '-3 hours') BETWEEN ? AND ? ORDER BY o.created_at DESC, o.id DESC`,
         args: [desde, hasta],
       })
-    : await db.execute(
-        `SELECT o.id, o.invoice_number, o.created_at, o.status, o.customer_name, o.customer_email, o.seller_name,
-                oi.product_name, oi.qty, oi.price, oi.cost
-         FROM orders o JOIN order_items oi ON oi.order_id = o.id
-         WHERE o.status IN ${SOLD_SQL}
-         ORDER BY o.created_at DESC, o.id DESC`
-      );
+    : await db.execute(`${select} ORDER BY o.created_at DESC, o.id DESC`);
 
   const header = [
-    'pedido', 'comprobante', 'estado', 'fecha_utc', 'cliente', 'email', 'vendedor', 'producto',
-    'cantidad', 'precio_unitario_gs', 'costo_unitario_gs',
-    'subtotal_gs', 'ganancia_bruta_gs',
+    'pedido', 'comprobante', 'estado', 'fecha_local', 'canal', 'medio_pago', 'cliente', 'email', 'vendedor',
+    'producto', 'cantidad', 'precio_unitario_gs', 'costo_unitario_gs', 'subtotal_gs', 'ganancia_bruta_gs',
   ];
 
-  const lines = [header.join(';')];
-  for (const r of res.rows) {
+  const rows = res.rows.map((r) => {
     const qty = Number(r.qty);
     const price = Number(r.price);
     const cost = Number(r.cost);
-    lines.push(
-      [
-        csvCell(r.id),
-        csvCell(r.invoice_number ?? ''),
-        csvCell(r.status),
-        csvCell(r.created_at),
-        csvCell(r.customer_name),
-        csvCell(r.customer_email),
-        csvCell(r.seller_name),
-        csvCell(r.product_name),
-        qty,
-        price,
-        cost,
-        price * qty,
-        cost > 0 ? (price - cost) * qty : '',
-      ].join(';')
-    );
-  }
-
-  // BOM para que Excel abra el UTF-8 con acentos correctos
-  return new Response('﻿' + lines.join('\r\n'), {
-    headers: {
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': 'attachment; filename="ventas-notestore.csv"',
-    },
+    const method = String(r.payment_method);
+    return [
+      Number(r.id),
+      r.invoice_number ?? '',
+      r.status,
+      r.fecha,
+      r.source === 'manual' ? 'Mostrador' : 'Web',
+      isPaymentMethod(method) ? PAYMENT_METHODS[method] : '',
+      r.customer_name,
+      r.customer_email,
+      r.seller_name,
+      r.product_name,
+      qty,
+      price,
+      cost,
+      price * qty,
+      cost > 0 ? (price - cost) * qty : '',
+    ];
   });
+
+  return csvResponse('ventas-notestore.csv', header, rows);
 };

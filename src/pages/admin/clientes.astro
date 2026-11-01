@@ -104,8 +104,8 @@ function formatDate(sqlDate: string): string {
         <div>
           <h2 class="text-lg font-bold">{detail.name}</h2>
           <p class="text-sm text-neutral-500">{detail.email}</p>
-          {detail.phone && <p class="text-sm text-neutral-500">📞 {detail.phone}</p>}
-          {detail.address && <p class="text-sm text-neutral-500">📍 {detail.address}</p>}
+          {detail.phone && <p class="text-sm text-neutral-500">Tel. {detail.phone}</p>}
+          {detail.address && <p class="text-sm text-neutral-500">Dirección: {detail.address}</p>}
           <p class="mt-1 text-xs text-neutral-400">Cliente desde {formatDate(detail.since)}</p>
         </div>
         <a href="/admin/clientes" class="text-sm font-semibold text-neutral-500 hover:text-neutral-900 hover:underline">

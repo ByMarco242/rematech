@@ -2,6 +2,7 @@
 import AdminLayout from '../../layouts/AdminLayout.astro';
 import { getDb, SOLD_SQL } from '../../lib/db';
 import { formatPrice } from '../../lib/util';
+import { lastMonths, monthLabel } from '../../lib/time';
 
 const db = await getDb();
 
@@ -26,7 +27,7 @@ const [
   ),
   db.execute(
     `SELECT COALESCE(SUM(total), 0) AS revenue, COUNT(*) AS n
-     FROM orders WHERE status IN ${SOLD_SQL} AND created_at >= date('now', 'start of month')`
+     FROM orders WHERE status IN ${SOLD_SQL} AND datetime(created_at, '-3 hours') >= datetime('now', '-3 hours', 'start of month')`
   ),
   db.execute(
     `SELECT
@@ -50,8 +51,9 @@ const [
      FROM orders`
   ),
   db.execute(
-    `SELECT strftime('%Y-%m', created_at) AS ym, COALESCE(SUM(total), 0) AS revenue, COUNT(*) AS n
-     FROM orders WHERE status IN ${SOLD_SQL} AND created_at >= date('now', 'start of month', '-5 months')
+    `SELECT strftime('%Y-%m', datetime(created_at, '-3 hours')) AS ym, COALESCE(SUM(total), 0) AS revenue, COUNT(*) AS n
+     FROM orders WHERE status IN ${SOLD_SQL}
+       AND datetime(created_at, '-3 hours') >= datetime('now', '-3 hours', 'start of month', '-5 months')
      GROUP BY ym ORDER BY ym`
   ),
   db.execute(
@@ -80,13 +82,13 @@ const [
   db.execute(`SELECT COUNT(*) AS n FROM products WHERE cost <= 0`),
   db.execute(
     `SELECT COALESCE(SUM(amount), 0) AS total,
-            COALESCE(SUM(CASE WHEN expense_date >= date('now', 'start of month') THEN amount END), 0) AS month
+            COALESCE(SUM(CASE WHEN expense_date >= date('now', '-3 hours', 'start of month') THEN amount END), 0) AS month
      FROM expenses`
   ),
   db.execute(
     `SELECT seller_name, COUNT(*) AS n, COALESCE(SUM(total), 0) AS revenue,
             SUM(CASE WHEN source = 'manual' THEN 1 ELSE 0 END) AS manual_n,
-            COALESCE(SUM(CASE WHEN created_at >= date('now', 'start of month') THEN total END), 0) AS month_revenue
+            COALESCE(SUM(CASE WHEN datetime(created_at, '-3 hours') >= datetime('now', '-3 hours', 'start of month') THEN total END), 0) AS month_revenue
      FROM orders WHERE status IN ${SOLD_SQL} AND seller_name != ''
      GROUP BY seller_name ORDER BY revenue DESC`
   ),
@@ -115,15 +117,7 @@ const netProfit = grossProfit - totalExpenses;
 const monthlyMap = new Map(
   monthlyRes.rows.map((r) => [String(r.ym), { revenue: Number(r.revenue), n: Number(r.n) }])
 );
-const monthFmt = new Intl.DateTimeFormat('es-PY', { month: 'short' });
-const months: { label: string; revenue: number; n: number }[] = [];
-const now = new Date();
-for (let i = 5; i >= 0; i--) {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-  const ym = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-  const data = monthlyMap.get(ym) ?? { revenue: 0, n: 0 };
-  months.push({ label: monthFmt.format(d), ...data });
-}
+const months = lastMonths(6).map((ym) => ({ label: monthLabel(ym), ...(monthlyMap.get(ym) ?? { revenue: 0, n: 0 }) }));
 const maxMonthly = Math.max(...months.map((m) => m.revenue), 1);
 
 const topProducts = topProductsRes.rows.map((r) => ({
@@ -176,12 +170,12 @@ if (desde && hasta) {
                    COALESCE(SUM(oi.qty), 0) AS units,
                    COALESCE(SUM(CASE WHEN oi.cost > 0 THEN (oi.price - oi.cost) * oi.qty END), 0) AS profit
             FROM orders o LEFT JOIN order_items oi ON oi.order_id = o.id
-            WHERE o.status IN ${SOLD_SQL} AND date(o.created_at) BETWEEN ? AND ?`,
+            WHERE o.status IN ${SOLD_SQL} AND date(o.created_at, '-3 hours') BETWEEN ? AND ?`,
       args: [desde, hasta],
     }),
     db.execute({
-      sql: `SELECT date(created_at) AS day, COALESCE(SUM(total), 0) AS revenue, COUNT(*) AS n
-            FROM orders WHERE status IN ${SOLD_SQL} AND date(created_at) BETWEEN ? AND ?
+      sql: `SELECT date(created_at, '-3 hours') AS day, COALESCE(SUM(total), 0) AS revenue, COUNT(*) AS n
+            FROM orders WHERE status IN ${SOLD_SQL} AND date(created_at, '-3 hours') BETWEEN ? AND ?
             GROUP BY day ORDER BY day DESC`,
       args: [desde, hasta],
     }),
@@ -244,7 +238,7 @@ const input =
 
   {(productsNoCost > 0 || unitsNoCost > 0) && (
     <p class="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-      ⚠️ {productsNoCost > 0 && `Hay ${productsNoCost} ${productsNoCost === 1 ? 'producto' : 'productos'} sin costo cargado.`}
+      {productsNoCost > 0 && `Hay ${productsNoCost} ${productsNoCost === 1 ? 'producto' : 'productos'} sin costo cargado.`}
       {unitsNoCost > 0 && ` ${unitsNoCost} unidades vendidas no tienen costo registrado.`}
       Las ganancias solo cuentan los ítems con costo.
     </p>

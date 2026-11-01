@@ -167,6 +167,51 @@ const SCHEMA = [
     cost REAL NOT NULL DEFAULT 0,
     active INTEGER NOT NULL DEFAULT 1
   )`,
+  `CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_name TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL,
+    entity TEXT NOT NULL,
+    entity_id INTEGER,
+    detail TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS cash_closings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    close_date TEXT NOT NULL UNIQUE,
+    opening_cash REAL NOT NULL DEFAULT 0,
+    cash_sales REAL NOT NULL DEFAULT 0,
+    withdrawals REAL NOT NULL DEFAULT 0,
+    expected_cash REAL NOT NULL DEFAULT 0,
+    counted_cash REAL NOT NULL DEFAULT 0,
+    difference REAL NOT NULL DEFAULT 0,
+    card_sales REAL NOT NULL DEFAULT 0,
+    transfer_sales REAL NOT NULL DEFAULT 0,
+    other_sales REAL NOT NULL DEFAULT 0,
+    total_sales REAL NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT '',
+    user_name TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS purchases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    purchase_date TEXT NOT NULL,
+    supplier TEXT NOT NULL,
+    invoice_number TEXT NOT NULL DEFAULT '',
+    with_invoice INTEGER NOT NULL DEFAULT 1,
+    total REAL NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT '',
+    user_name TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS purchase_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE,
+    product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+    product_name TEXT NOT NULL,
+    qty INTEGER NOT NULL,
+    unit_cost REAL NOT NULL
+  )`,
 ];
 
 export async function getDb(): Promise<Client> {
@@ -194,6 +239,9 @@ export async function getDb(): Promise<Client> {
         "ALTER TABLE orders ADD COLUMN tracking_code TEXT NOT NULL DEFAULT ''",
         'ALTER TABLE order_items ADD COLUMN variant_id INTEGER',
         "ALTER TABLE order_items ADD COLUMN variant_label TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE products ADD COLUMN gpu TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE orders ADD COLUMN payment_method TEXT NOT NULL DEFAULT ''",
+        'ALTER TABLE expenses ADD COLUMN recurring INTEGER NOT NULL DEFAULT 0',
       ];
       for (const m of migrations) {
         try {
@@ -231,6 +279,19 @@ export type OrderStatus =
 export const SOLD_STATUSES = ['aprobado', 'enviado', 'entregado'] as const;
 export const SOLD_SQL = "('aprobado','enviado','entregado')";
 
+/** Medios de pago para ventas y cierre de caja */
+export const PAYMENT_METHODS = {
+  efectivo: 'Efectivo',
+  tarjeta: 'Tarjeta',
+  transferencia: 'Transferencia',
+  qr: 'QR / billetera',
+} as const;
+export type PaymentMethod = keyof typeof PAYMENT_METHODS;
+
+export function isPaymentMethod(v: unknown): v is PaymentMethod {
+  return typeof v === 'string' && v in PAYMENT_METHODS;
+}
+
 export interface Order {
   id: number;
   user_id: number | null;
@@ -248,6 +309,7 @@ export interface Order {
   shipping_zone: string;
   shipping_cost: number;
   tracking_code: string;
+  payment_method: string;
   created_at: string;
 }
 
@@ -278,6 +340,7 @@ export interface Product {
   ram: string;
   storage: string;
   screen: string;
+  gpu: string;
   stock: number;
   min_stock: number;
   featured: number;

@@ -1,5 +1,6 @@
 import { getDb } from './db';
 import type { Coupon } from './db';
+import { localToday } from './time';
 
 export async function listCoupons(): Promise<Coupon[]> {
   const db = await getDb();
@@ -52,7 +53,8 @@ export async function validateCoupon(
   const coupon = res.rows[0] as unknown as Coupon | undefined;
   if (!coupon) return { error: 'El cupón no existe.' };
   if (!coupon.active) return { error: 'El cupón no está activo.' };
-  if (coupon.expires_at && new Date(coupon.expires_at).getTime() < Date.now()) {
+  // expires_at es el último día válido (fecha local), inclusive
+  if (coupon.expires_at && coupon.expires_at.slice(0, 10) < localToday()) {
     return { error: 'El cupón está vencido.' };
   }
   if (coupon.max_uses !== null && coupon.used_count >= coupon.max_uses) {
@@ -69,4 +71,28 @@ export async function validateCoupon(
 export async function applyCouponUse(id: number): Promise<void> {
   const db = await getDb();
   await db.execute({ sql: 'UPDATE coupons SET used_count = used_count + 1 WHERE id = ?', args: [id] });
+}
+
+/**
+ * Desactiva los cupones vencidos o sin usos disponibles.
+ * Devuelve los códigos desactivados (para dejarlo registrado).
+ */
+export async function deactivateStaleCoupons(): Promise<string[]> {
+  const db = await getDb();
+  const res = await db.execute({
+    sql: `UPDATE coupons SET active = 0
+          WHERE active = 1 AND (
+            (expires_at IS NOT NULL AND substr(expires_at, 1, 10) < ?)
+            OR (max_uses IS NOT NULL AND used_count >= max_uses))
+          RETURNING code`,
+    args: [localToday()],
+  });
+  return res.rows.map((r) => String(r.code));
+}
+
+/** Estado legible de un cupón */
+export function couponStatus(c: Coupon): 'activo' | 'vencido' | 'agotado' | 'pausado' {
+  if (c.expires_at && c.expires_at.slice(0, 10) < localToday()) return 'vencido';
+  if (c.max_uses !== null && c.used_count >= c.max_uses) return 'agotado';
+  return c.active ? 'activo' : 'pausado';
 }

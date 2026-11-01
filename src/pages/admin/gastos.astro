@@ -2,9 +2,24 @@
 import AdminLayout from '../../layouts/AdminLayout.astro';
 import { getDb } from '../../lib/db';
 import { formatPrice } from '../../lib/util';
+import { localToday } from '../../lib/time';
+import { logAudit } from '../../lib/audit';
 
 const db = await getDb();
 const me = Astro.locals.user!;
+
+/** Gastos fijos (último registro de cada uno) que todavía no se cargaron este mes */
+async function pendingRecurring() {
+  const res = await db.execute(
+    `SELECT e.category, e.description, e.amount FROM expenses e
+     WHERE e.recurring = 1
+       AND e.id = (SELECT MAX(id) FROM expenses x WHERE x.recurring = 1 AND x.category = e.category AND x.description = e.description)
+       AND NOT EXISTS (SELECT 1 FROM expenses y WHERE y.category = e.category AND y.description = e.description
+                       AND y.expense_date >= date('now', '-3 hours', 'start of month'))
+     ORDER BY e.category, e.description`
+  );
+  return res.rows.map((r) => ({ category: String(r.category), description: String(r.description), amount: Number(r.amount) }));
+}
 
 let error = '';
 
@@ -15,7 +30,31 @@ if (Astro.request.method === 'POST') {
   if (action === 'delete') {
     const id = Number(form.get('id'));
     if (Number.isInteger(id)) {
+      const gone = (await db.execute({ sql: 'SELECT description, amount, expense_date FROM expenses WHERE id = ?', args: [id] })).rows[0];
       await db.execute({ sql: 'DELETE FROM expenses WHERE id = ?', args: [id] });
+      if (gone) await logAudit(me.name, 'Eliminó gasto', 'gasto', id, `${gone.expense_date} · ${gone.description} · ${formatPrice(Number(gone.amount))}`);
+    }
+    return Astro.redirect('/admin/gastos');
+  }
+
+  if (action === 'load_recurring') {
+    const pending = await pendingRecurring();
+    for (const r of pending) {
+      await db.execute({
+        sql: `INSERT INTO expenses (expense_date, category, description, amount, user_name, recurring) VALUES (?, ?, ?, ?, ?, 1)`,
+        args: [localToday(), r.category, r.description, r.amount, me.name],
+      });
+    }
+    if (pending.length) await logAudit(me.name, `Cargó ${pending.length} gastos fijos del mes`, 'gasto', null, pending.map((r) => r.description).join(', '));
+    return Astro.redirect('/admin/gastos');
+  }
+
+  if (action === 'stop_recurring') {
+    const id = Number(form.get('id'));
+    const row = (await db.execute({ sql: 'SELECT category, description FROM expenses WHERE id = ?', args: [id] })).rows[0];
+    if (row) {
+      await db.execute({ sql: 'UPDATE expenses SET recurring = 0 WHERE category = ? AND description = ?', args: [row.category, row.description] });
+      await logAudit(me.name, 'Dejó de repetir un gasto fijo', 'gasto', id, String(row.description));
     }
     return Astro.redirect('/admin/gastos');
   }
@@ -33,11 +72,13 @@ if (Astro.request.method === 'POST') {
     } else if (!description) {
       error = 'Agregá una descripción.';
     } else {
-      await db.execute({
-        sql: `INSERT INTO expenses (expense_date, category, description, amount, user_name)
-              VALUES (?, ?, ?, ?, ?)`,
-        args: [date, category, description, amount, me.name],
+      const recurring = form.get('recurring') ? 1 : 0;
+      const res = await db.execute({
+        sql: `INSERT INTO expenses (expense_date, category, description, amount, user_name, recurring)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+        args: [date, category, description, amount, me.name, recurring],
       });
+      await logAudit(me.name, recurring ? 'Registró gasto fijo' : 'Registró gasto', 'gasto', Number(res.lastInsertRowid), `${date} · ${category} · ${description} · ${formatPrice(amount)}`);
       return Astro.redirect('/admin/gastos');
     }
   }
@@ -47,7 +88,7 @@ const [listRes, totalsRes] = await Promise.all([
   db.execute('SELECT * FROM expenses ORDER BY expense_date DESC, id DESC LIMIT 100'),
   db.execute(
     `SELECT COALESCE(SUM(amount), 0) AS total,
-            COALESCE(SUM(CASE WHEN expense_date >= date('now', 'start of month') THEN amount END), 0) AS month
+            COALESCE(SUM(CASE WHEN expense_date >= date('now', '-3 hours', 'start of month') THEN amount END), 0) AS month
      FROM expenses`
   ),
 ]);
@@ -59,10 +100,13 @@ const expenses = listRes.rows as unknown as {
   description: string;
   amount: number;
   user_name: string;
+  recurring: number;
 }[];
 const totals = totalsRes.rows[0];
+const pending = await pendingRecurring();
+const pendingTotal = pending.reduce((a, r) => a + r.amount, 0);
 
-const today = new Date().toISOString().slice(0, 10);
+const today = localToday();
 const categories = ['General', 'Alquiler', 'Sueldos', 'Servicios', 'Envíos', 'Publicidad', 'Impuestos', 'Compras varias'];
 
 const input =
@@ -72,8 +116,20 @@ const input =
 <AdminLayout title="Gastos — NoteStore admin">
   <h1 class="text-2xl font-bold tracking-tight">Gastos operativos</h1>
   <p class="mt-1 text-sm text-neutral-500">
-    Registrá los gastos del negocio para calcular la ganancia neta en Métricas.
+    Registrá los gastos del negocio para calcular el resultado en <a href="/admin/finanzas" class="underline">Finanzas</a>.
+    Marcá como fijos los que se repiten todos los meses (alquiler, sueldos, servicios).
   </p>
+
+  {pending.length > 0 && (
+    <form method="POST" class="mt-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      <input type="hidden" name="_action" value="load_recurring" />
+      <p class="flex-1">
+        Faltan cargar {pending.length} gastos fijos de este mes ({formatPrice(pendingTotal)}):
+        {pending.map((r) => r.description).join(', ')}.
+      </p>
+      <button type="submit" class="cursor-pointer rounded-lg bg-amber-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800">Cargarlos con fecha de hoy</button>
+    </form>
+  )}
 
   <div class="mt-6 grid grid-cols-2 gap-4 lg:max-w-md">
     <div class="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
@@ -113,6 +169,10 @@ const input =
             <label for="g-monto" class="mb-1.5 block text-sm font-medium text-neutral-700">Monto (Gs.) *</label>
             <input id="g-monto" name="amount" type="number" min="1" step="1" required class={input} placeholder="1500000" />
           </div>
+          <label class="flex items-center gap-2 text-sm text-neutral-600">
+            <input type="checkbox" name="recurring" value="1" class="accent-neutral-900" />
+            Se repite todos los meses (gasto fijo)
+          </label>
           <button
             type="submit"
             class="w-full cursor-pointer rounded-xl bg-neutral-900 py-3 font-semibold text-white transition-colors hover:bg-neutral-700"
@@ -123,7 +183,7 @@ const input =
       </div>
     </div>
 
-    <div class="lg:col-span-2">
+    <div class="min-w-0 lg:col-span-2">
       <div class="overflow-x-auto rounded-2xl border border-neutral-200 bg-white shadow-sm">
         <table class="w-full min-w-140 text-sm">
           <thead class="border-b border-neutral-200 bg-neutral-50 text-left text-xs text-neutral-500 uppercase">
@@ -145,10 +205,20 @@ const input =
                   <td class="px-5 py-3">
                     <span class="rounded-full bg-neutral-100 px-2.5 py-0.5 text-xs font-semibold text-neutral-600">{g.category}</span>
                   </td>
-                  <td class="px-5 py-3">{g.description}</td>
+                  <td class="px-5 py-3">
+                    {g.description}
+                    {g.recurring === 1 && <span class="ml-1.5 rounded bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-700">fijo</span>}
+                  </td>
                   <td class="px-5 py-3 text-right font-semibold whitespace-nowrap">{formatPrice(g.amount)}</td>
-                  <td class="px-5 py-3 text-right">
-                    <form method="POST" onsubmit={`return confirm('¿Eliminar este gasto de ${g.expense_date}?')`}>
+                  <td class="px-5 py-3 text-right whitespace-nowrap">
+                    {g.recurring === 1 && (
+                      <form method="POST" class="inline" onsubmit="return confirm('¿Dejar de repetir este gasto todos los meses?')">
+                        <input type="hidden" name="_action" value="stop_recurring" />
+                        <input type="hidden" name="id" value={g.id} />
+                        <button type="submit" class="cursor-pointer rounded-lg px-2 py-1.5 text-xs font-semibold text-neutral-500 hover:bg-neutral-100">No repetir</button>
+                      </form>
+                    )}
+                    <form method="POST" class="inline" onsubmit={`return confirm('¿Eliminar este gasto de ${g.expense_date}?')`}>
                       <input type="hidden" name="_action" value="delete" />
                       <input type="hidden" name="id" value={g.id} />
                       <button type="submit" class="cursor-pointer rounded-lg px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50">

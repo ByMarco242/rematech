@@ -13,6 +13,11 @@ const ADMIN_ONLY = [
   '/admin/cupones',
   '/admin/resenas',
   '/admin/envios',
+  '/admin/productos/masivo',
+  '/admin/productos.csv',
+  '/admin/finanzas',
+  '/admin/compras',
+  '/admin/auditoria',
 ];
 
 const CSP = [

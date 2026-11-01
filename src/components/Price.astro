@@ -1,0 +1,30 @@
+---
+import { formatPrice } from '../lib/util';
+
+interface Props {
+  price: number;
+  oldPrice?: number | null;
+  size?: 'sm' | 'md' | 'lg';
+  /** id del elemento del precio, para actualizarlo desde JS (variantes) */
+  id?: string;
+}
+
+const { price, oldPrice, size = 'md', id } = Astro.props;
+const onSale = oldPrice != null && oldPrice > price;
+const discount = onSale ? Math.round((1 - price / oldPrice!) * 100) : 0;
+
+const priceSize = { sm: 'text-base', md: 'text-lg', lg: 'text-3xl sm:text-4xl' }[size];
+---
+
+<div class="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+  <p id={id} class:list={['font-semibold tracking-tight', priceSize, onSale ? 'text-accent' : 'text-fg']}>
+    {formatPrice(price)}
+  </p>
+  {onSale && (
+    <p class="text-sm text-fg-subtle">
+      <span class="sr-only">Antes</span>
+      <s>{formatPrice(oldPrice!)}</s>
+      <span class="ml-1 font-mono text-xs text-accent">−{discount}%</span>
+    </p>
+  )}
+</div>

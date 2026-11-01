@@ -44,15 +44,20 @@ const ogImage = image ? new URL(image, origin).href : null;
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     {ogImage && <meta name="twitter:image" content={ogImage} />}
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💻</text></svg>" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%230b0b0c'/><rect x='8' y='8' width='16' height='16' fill='%23ff4d00'/></svg>" />
+    <meta name="theme-color" content="#0b0b0c" />
+    <meta name="color-scheme" content="dark" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
   </head>
-  <body class="min-h-screen bg-neutral-50 text-neutral-900 antialiased">
+  <body class="theme-dark min-h-screen bg-bg text-fg antialiased">
+    <a href="#contenido" class="sr-only z-100 bg-accent px-4 py-2 font-semibold text-on-accent focus:not-sr-only focus:fixed focus:top-2 focus:left-2">
+      Saltar al contenido
+    </a>
     <Navbar />
 
     <script is:inline>
@@ -131,7 +136,7 @@ const ogImage = image ? new URL(image, origin).href : null;
         btn.classList.remove('btn-pop');
         void btn.offsetWidth;
         btn.classList.add('btn-pop');
-        window.showToast('Agregado al carrito ✓');
+        window.showToast('Agregado al carrito');
       });
 
       document.addEventListener('click', async (e) => {
@@ -152,7 +157,7 @@ const ogImage = image ? new URL(image, origin).href : null;
           }
           const data = await res.json();
           btn.classList.toggle('is-wishlisted', Boolean(data.wishlisted));
-          window.showToast(data.wishlisted ? 'Agregado a favoritos ✓' : 'Quitado de favoritos');
+          window.showToast(data.wishlisted ? 'Agregado a favoritos' : 'Quitado de favoritos');
         } catch {
           window.showToast('No se pudo actualizar favoritos.');
         } finally {
@@ -161,50 +166,94 @@ const ogImage = image ? new URL(image, origin).href : null;
       });
 
       window.NoteStoreCart.updateBadge();
+
+      // Comparador: hasta 4 productos, guardados en localStorage
+      window.NoteStoreCompare = {
+        max: 4,
+        get() {
+          try {
+            return JSON.parse(localStorage.getItem('compare') || '[]').map(Number).filter(Boolean);
+          } catch {
+            return [];
+          }
+        },
+        save(ids) {
+          try {
+            localStorage.setItem('compare', JSON.stringify(ids));
+          } catch {}
+          this.sync();
+        },
+        toggle(id) {
+          const ids = this.get();
+          if (ids.includes(id)) {
+            this.save(ids.filter((x) => x !== id));
+            return false;
+          }
+          if (ids.length >= this.max) {
+            window.showToast(`Podés comparar hasta ${this.max} productos.`);
+            return false;
+          }
+          this.save([...ids, id]);
+          return true;
+        },
+        sync() {
+          const ids = this.get();
+          document.querySelectorAll('[data-compare-toggle]').forEach((btn) => {
+            btn.setAttribute('aria-pressed', String(ids.includes(Number(btn.dataset.compareToggle))));
+          });
+          const bar = document.getElementById('compare-bar');
+          if (!bar) return;
+          bar.hidden = ids.length === 0 || location.pathname === '/comparar';
+          bar.querySelector('[data-compare-count]').textContent = String(ids.length);
+          bar.querySelector('[data-compare-link]').href = `/comparar?ids=${ids.join(',')}`;
+          bar.querySelector('[data-compare-link]').classList.toggle('pointer-events-none', ids.length < 2);
+          bar.querySelector('[data-compare-link]').setAttribute('aria-disabled', String(ids.length < 2));
+          bar.querySelector('[data-compare-hint]').hidden = ids.length >= 2;
+        },
+      };
+
+      document.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-compare-toggle]');
+        if (btn) {
+          e.preventDefault();
+          window.NoteStoreCompare.toggle(Number(btn.dataset.compareToggle));
+          return;
+        }
+        if (e.target.closest('[data-compare-clear]')) window.NoteStoreCompare.save([]);
+      });
     </script>
 
-    <slot />
+    <main id="contenido">
+      <slot />
+    </main>
     <Footer />
 
     <div
+      id="compare-bar"
+      hidden
+      class="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/95 backdrop-blur-sm"
+    >
+      <div class="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
+        <p class="text-sm">
+          <span class="font-mono text-accent" data-compare-count>0</span>
+          <span class="text-fg-muted">para comparar</span>
+          <span class="hidden text-fg-subtle sm:inline" data-compare-hint>· elegí al menos 2</span>
+        </p>
+        <button type="button" data-compare-clear class="btn-ghost ml-auto cursor-pointer text-sm">Limpiar</button>
+        <a href="/comparar" data-compare-link class="btn btn-primary aria-disabled:opacity-45">Comparar</a>
+      </div>
+    </div>
+
+    <div
       id="toast"
-      class="pointer-events-none fixed bottom-6 left-1/2 z-100 -translate-x-1/2 translate-y-20 rounded-full bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white opacity-0 shadow-xl transition-all duration-300"
+      role="status"
+      aria-live="polite"
+      class="pointer-events-none fixed bottom-20 left-1/2 z-100 -translate-x-1/2 translate-y-20 border border-line-strong bg-surface-3 px-4 py-2.5 text-sm font-medium text-fg opacity-0 transition-all duration-200"
     >
     </div>
 
     <script is:inline>
-      (() => {
-        const groups = document.querySelectorAll('[data-reveal-group]');
-        for (const group of groups) {
-          let i = 0;
-          for (const child of group.children) {
-            child.style.setProperty('--reveal-delay', `${Math.min(i++ * 90, 540)}ms`);
-          }
-        }
-
-        const targets = [
-          ...document.querySelectorAll('[data-reveal]'),
-          ...[...groups].flatMap((g) => [...g.children]),
-        ];
-
-        if (!('IntersectionObserver' in window)) {
-          targets.forEach((el) => el.classList.add('revealed'));
-          return;
-        }
-
-        const observer = new IntersectionObserver(
-          (entries) => {
-            for (const entry of entries) {
-              if (entry.isIntersecting) {
-                entry.target.classList.add('revealed');
-                observer.unobserve(entry.target);
-              }
-            }
-          },
-          { threshold: 0.1, rootMargin: '0px 0px -40px 0px' }
-        );
-        targets.forEach((el) => observer.observe(el));
-      })();
+      window.NoteStoreCompare.sync();
     </script>
   </body>
 </html>

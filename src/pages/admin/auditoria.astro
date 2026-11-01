@@ -1,0 +1,131 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getDb } from '../../lib/db';
+import { formatLocal } from '../../lib/time';
+
+const db = await getDb();
+
+const ENTITIES: Record<string, string> = {
+  pedido: 'Pedidos',
+  producto: 'Productos',
+  precios: 'Precios masivos',
+  inventario: 'Inventario',
+  compra: 'Compras',
+  caja: 'Caja',
+  gasto: 'Gastos',
+  cupon: 'Cupones',
+  usuario: 'Usuarios',
+};
+
+const entity = Astro.url.searchParams.get('tipo') ?? '';
+const who = (Astro.url.searchParams.get('usuario') ?? '').trim();
+const page = Math.max(Math.floor(Number(Astro.url.searchParams.get('page'))) || 1, 1);
+const PAGE_SIZE = 50;
+
+const where: string[] = [];
+const args: (string | number)[] = [];
+if (entity in ENTITIES) {
+  where.push('entity = ?');
+  args.push(entity);
+}
+if (who) {
+  where.push('user_name = ?');
+  args.push(who);
+}
+const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+const [rowsRes, countRes, usersRes] = await Promise.all([
+  db.execute({ sql: `SELECT * FROM audit_log ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`, args: [...args, PAGE_SIZE, (page - 1) * PAGE_SIZE] }),
+  db.execute({ sql: `SELECT COUNT(*) AS n FROM audit_log ${whereSql}`, args }),
+  db.execute('SELECT DISTINCT user_name FROM audit_log ORDER BY user_name'),
+]);
+const rows = rowsRes.rows as unknown as { id: number; user_name: string; action: string; entity: string; entity_id: number | null; detail: string; created_at: string }[];
+const total = Number(countRes.rows[0].n);
+const pages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
+const users = usersRes.rows.map((r) => String(r.user_name));
+
+function link(n: number) {
+  const p = new URLSearchParams();
+  if (entity) p.set('tipo', entity);
+  if (who) p.set('usuario', who);
+  if (n > 1) p.set('page', String(n));
+  return `/admin/auditoria${p.toString() ? `?${p}` : ''}`;
+}
+function entityHref(r: (typeof rows)[number]) {
+  if (r.entity_id == null) return null;
+  if (r.entity === 'pedido') return `/admin/pedidos?q=${r.entity_id}`;
+  if (r.entity === 'producto') return `/admin/productos/${r.entity_id}`;
+  if (r.entity === 'compra') return `/admin/compras#compra-${r.entity_id}`;
+  return null;
+}
+const select = 'rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm';
+---
+
+<AdminLayout title="Auditoría — NoteStore admin">
+  <h1 class="text-2xl font-bold tracking-tight">Auditoría</h1>
+  <p class="mt-1 text-sm text-neutral-500">
+    Quién hizo qué y cuándo: pedidos, precios, stock, compras, caja, gastos, cupones y usuarios.
+    Los movimientos de stock detallados están en Inventario.
+  </p>
+
+  <form method="GET" class="mt-6 flex flex-wrap items-end gap-3">
+    <div>
+      <label for="tipo" class="mb-1 block text-xs font-medium text-neutral-500">Tipo</label>
+      <select id="tipo" name="tipo" class={select}>
+        <option value="">Todos</option>
+        {Object.entries(ENTITIES).map(([k, v]) => <option value={k} selected={k === entity}>{v}</option>)}
+      </select>
+    </div>
+    <div>
+      <label for="usuario" class="mb-1 block text-xs font-medium text-neutral-500">Usuario</label>
+      <select id="usuario" name="usuario" class={select}>
+        <option value="">Todos</option>
+        {users.map((u) => <option value={u} selected={u === who}>{u}</option>)}
+      </select>
+    </div>
+    <button type="submit" class="cursor-pointer rounded-lg bg-neutral-900 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-700">Filtrar</button>
+    <p class="ml-auto text-sm text-neutral-500">{total} registros</p>
+  </form>
+
+  <div class="mt-6 overflow-x-auto rounded-2xl border border-neutral-200 bg-white">
+    <table class="w-full min-w-160 text-sm">
+      <thead class="border-b border-neutral-200 bg-neutral-50 text-left text-xs text-neutral-500 uppercase">
+        <tr>
+          <th class="px-4 py-3 font-medium">Fecha</th>
+          <th class="px-4 py-3 font-medium">Usuario</th>
+          <th class="px-4 py-3 font-medium">Acción</th>
+          <th class="px-4 py-3 font-medium">Detalle</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-neutral-100">
+        {rows.length === 0 ? (
+          <tr><td colspan="4" class="p-10 text-center text-neutral-500">Todavía no hay registros. Se generan a medida que el equipo usa el panel.</td></tr>
+        ) : (
+          rows.map((r) => {
+            const href = entityHref(r);
+            return (
+              <tr class="align-top">
+                <td class="px-4 py-2.5 whitespace-nowrap text-neutral-500">{formatLocal(r.created_at)}</td>
+                <td class="px-4 py-2.5 whitespace-nowrap">{r.user_name}</td>
+                <td class="px-4 py-2.5">
+                  <span class="mr-1.5 rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] font-medium text-neutral-600">{ENTITIES[r.entity] ?? r.entity}</span>
+                  {r.action}
+                  {r.entity_id != null && (href ? <a href={href} class="ml-1 text-neutral-500 underline">#{r.entity_id}</a> : <span class="ml-1 text-neutral-500">#{r.entity_id}</span>)}
+                </td>
+                <td class="px-4 py-2.5 text-neutral-600">{r.detail}</td>
+              </tr>
+            );
+          })
+        )}
+      </tbody>
+    </table>
+  </div>
+
+  {pages > 1 && (
+    <nav class="mt-6 flex items-center justify-between text-sm" aria-label="Paginación">
+      {page > 1 ? <a href={link(page - 1)} class="rounded-lg border border-neutral-300 bg-white px-4 py-2 font-semibold">← Más nuevos</a> : <span></span>}
+      <span class="text-neutral-500">Página {page} de {pages}</span>
+      {page < pages ? <a href={link(page + 1)} class="rounded-lg border border-neutral-300 bg-white px-4 py-2 font-semibold">Más viejos →</a> : <span></span>}
+    </nav>
+  )}
+</AdminLayout>

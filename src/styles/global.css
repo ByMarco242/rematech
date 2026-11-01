@@ -1,7 +1,52 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  /* Grises cálidos (escala stone) — los usa el panel admin, que sigue en claro */
+  --color-neutral-50: oklch(98.5% 0.001 106.423);
+  --color-neutral-100: oklch(96.5% 0.002 106.424);
+  --color-neutral-200: oklch(91.5% 0.004 48.717);
+  --color-neutral-300: oklch(86.9% 0.005 56.366);
+  --color-neutral-400: oklch(70.9% 0.01 56.259);
+  --color-neutral-500: oklch(55.3% 0.013 58.071);
+  --color-neutral-600: oklch(44.4% 0.011 73.639);
+  --color-neutral-700: oklch(37.4% 0.01 67.558);
+  --color-neutral-800: oklch(26.8% 0.007 34.298);
+  --color-neutral-900: oklch(21.6% 0.006 56.043);
+  --color-neutral-950: oklch(14.7% 0.004 49.25);
+
+  /* ---------- Tienda: tokens del tema oscuro ---------- */
+  --color-bg: #0b0b0c;
+  --color-surface: #141416;
+  --color-surface-2: #1a1a1d;
+  --color-surface-3: #222226;
+  --color-line: #29292d;
+  --color-line-strong: #3d3d43;
+  --color-fg: #f2f2f2;
+  --color-fg-muted: #94949c;
+  --color-fg-subtle: #84848c;
+  --color-accent: #ff4d00;
+  --color-accent-hover: #ff6a26;
+  --color-on-accent: #0b0b0c;
+  --color-ok: #4ade80;
+  --color-warn: #fbbf24;
+  --color-danger: #f87171;
+
+  --radius-xs: 2px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-xl: 4px;
+  --radius-2xl: 6px;
+  --radius-3xl: 6px;
+
+  --shadow-sm: 0 0 #0000;
+
+  --ease-snappy: cubic-bezier(0.2, 0, 0, 1);
+  --default-transition-duration: 180ms;
+  --default-transition-timing-function: var(--ease-snappy);
 }
 
 html {
@@ -10,51 +55,127 @@ html {
 
 body {
   font-family: var(--font-sans);
+  font-feature-settings: "tnum" 1;
+}
+
+/* Titulares compactos: Archivo en ancho condensado */
+.font-display {
+  font-stretch: 78%;
+  letter-spacing: -0.01em;
+}
+
+/* Etiqueta técnica: mono, mayúsculas, pequeña */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .text-balance {
   text-wrap: balance;
 }
 
-/* ---------- Animaciones ---------- */
-
-@keyframes fade-up {
-  from {
-    opacity: 0;
-    transform: translateY(28px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+/* Foco visible y consistente en la tienda */
+.theme-dark :focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+.theme-dark ::selection {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
 }
 
-@keyframes hero-image {
-  from {
-    opacity: 0;
-    transform: translateY(24px) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+.theme-dark input[type="checkbox"],
+.theme-dark input[type="radio"] {
+  accent-color: var(--color-accent);
 }
+
+@layer components {
+/* Campos de formulario de la tienda */
+.field {
+  width: 100%;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  padding: 0.625rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  transition: border-color 150ms var(--ease-snappy);
+}
+.field::placeholder {
+  color: var(--color-fg-subtle);
+}
+.field:hover {
+  border-color: var(--color-line-strong);
+}
+.field:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+.field:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+select.field {
+  color-scheme: dark;
+}
+
+/* Botones de la tienda */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: var(--radius-md);
+  padding: 0.625rem 1.125rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  cursor: pointer;
+  transition:
+    background-color 150ms var(--ease-snappy),
+    border-color 150ms var(--ease-snappy),
+    color 150ms var(--ease-snappy);
+}
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.btn-primary {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+.btn-primary:not(:disabled):hover {
+  background: var(--color-accent-hover);
+}
+.btn-secondary {
+  border: 1px solid var(--color-line-strong);
+  color: var(--color-fg);
+}
+.btn-secondary:not(:disabled):hover {
+  border-color: var(--color-fg-muted);
+  background: var(--color-surface-2);
+}
+.btn-ghost {
+  color: var(--color-fg-muted);
+}
+.btn-ghost:hover {
+  color: var(--color-fg);
+}
+}
+
+/* ---------- Micro-interacciones ---------- */
 
 @keyframes badge-pop {
   0% {
-    transform: scale(0.4);
+    transform: scale(0.5);
   }
   60% {
-    transform: scale(1.35);
+    transform: scale(1.2);
   }
   100% {
     transform: scale(1);
@@ -66,59 +187,95 @@ body {
     transform: scale(1);
   }
   40% {
-    transform: scale(0.82);
+    transform: scale(0.94);
   }
   100% {
     transform: scale(1);
   }
 }
 
-/* Entrada al cargar la página (hero) */
-.animate-fade-up {
-  animation: fade-up 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+@keyframes drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
 }
 
-.animate-hero-image {
-  animation: hero-image 1.1s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both;
+@keyframes drawer-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: none;
+  }
 }
 
-.anim-delay-1 { animation-delay: 0.1s; }
-.anim-delay-2 { animation-delay: 0.2s; }
-.anim-delay-3 { animation-delay: 0.3s; }
-.anim-delay-4 { animation-delay: 0.45s; }
-
-/* Aparición al hacer scroll */
-[data-reveal],
-[data-reveal-group] > * {
-  opacity: 0;
-  transform: translateY(28px);
-  transition:
-    opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
-  transition-delay: var(--reveal-delay, 0s);
-}
-
-.revealed,
-[data-reveal].revealed,
-[data-reveal-group] > .revealed {
-  opacity: 1;
-  transform: none;
-}
-
-/* Micro-interacciones */
 .badge-pop {
-  animation: badge-pop 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: badge-pop 0.25s ease-out;
 }
 
 .btn-pop {
-  animation: btn-pop 0.3s ease;
+  animation: btn-pop 0.2s ease;
+}
+
+@layer components {
+/* Drawers con <dialog> (menú móvil, filtros) */
+dialog.drawer {
+  margin: 0;
+  height: 100dvh;
+  max-height: none;
+  width: min(22rem, 88vw);
+  max-width: none;
+  border: 0;
+  padding: 0;
+  background: var(--color-surface);
+  color: var(--color-fg);
+}
+dialog.drawer[open] {
+  animation: drawer-in 220ms var(--ease-snappy);
+}
+dialog.drawer.drawer-right {
+  margin-left: auto;
+}
+dialog.drawer.drawer-left[open] {
+  animation-name: drawer-in-left;
+}
+dialog.drawer::backdrop {
+  background: rgb(0 0 0 / 0.6);
+}
+}
+
+/* En la ficha móvil la barra del comparador sube sobre la CTA fija */
+@media (max-width: 1023px) {
+  .has-sticky-cta #compare-bar {
+    bottom: 4.25rem;
+  }
+}
+
+/* Calificación: se rellenan las estrellas hasta la elegida */
+.rating-input .star-on {
+  display: none;
+}
+.rating-input:has(input[value="1"]:checked) label:nth-child(-n + 1),
+.rating-input:has(input[value="2"]:checked) label:nth-child(-n + 2),
+.rating-input:has(input[value="3"]:checked) label:nth-child(-n + 3),
+.rating-input:has(input[value="4"]:checked) label:nth-child(-n + 4),
+.rating-input:has(input[value="5"]:checked) label:nth-child(-n + 5) {
+  & .star-on {
+    display: inline;
+  }
+  & .star-off {
+    display: none;
+  }
 }
 
 .wishlist-btn svg {
   fill: none;
 }
 .wishlist-btn.is-wishlisted {
-  color: #f43f5e;
+  color: var(--color-accent);
 }
 .wishlist-btn.is-wishlisted svg {
   fill: currentColor;
@@ -129,7 +286,6 @@ a {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Accesibilidad: sin animaciones si el usuario lo prefiere */
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
@@ -140,10 +296,5 @@ a {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
-  }
-  [data-reveal],
-  [data-reveal-group] > * {
-    opacity: 1;
-    transform: none;
   }
 }

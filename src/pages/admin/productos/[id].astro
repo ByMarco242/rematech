@@ -11,6 +11,8 @@ import {
   getProductImages,
   getProductVariants,
 } from '../../../lib/products';
+import { logAudit } from '../../../lib/audit';
+import { formatPrice } from '../../../lib/util';
 
 const db = await getDb();
 const id = Number(Astro.params.id);
@@ -26,17 +28,26 @@ if (Astro.request.method === 'POST') {
   } else {
     const d = parsed.data;
     const slug = await uniqueProductSlug(d.name, id);
+    const beforeRes = await db.execute({ sql: 'SELECT price, cost, stock FROM products WHERE id = ?', args: [id] });
+    const before = beforeRes.rows[0];
     await db.execute({
       sql: `UPDATE products SET
               name = ?, slug = ?, brand = ?, description = ?, price = ?, old_price = ?,
               cost = ?, image_url = ?, category_id = ?, cpu = ?, ram = ?, storage = ?,
-              screen = ?, stock = ?, min_stock = ?, featured = ?
+              screen = ?, gpu = ?, stock = ?, min_stock = ?, featured = ?
             WHERE id = ?`,
       args: [
         d.name, slug, d.brand, d.description, d.price, d.old_price, d.cost, d.image_url,
-        d.category_id, d.cpu, d.ram, d.storage, d.screen, d.stock, d.min_stock, d.featured, id,
+        d.category_id, d.cpu, d.ram, d.storage, d.screen, d.gpu, d.stock, d.min_stock, d.featured, id,
       ],
     });
+    if (before) {
+      const changes: string[] = [];
+      if (Number(before.price) !== d.price) changes.push(`precio ${formatPrice(Number(before.price))} → ${formatPrice(d.price)}`);
+      if (Number(before.cost) !== d.cost) changes.push(`costo ${formatPrice(Number(before.cost))} → ${formatPrice(d.cost)}`);
+      if (Number(before.stock) !== d.stock) changes.push(`stock ${before.stock} → ${d.stock}`);
+      await logAudit(Astro.locals.user!.name, 'Editó producto', 'producto', id, [d.name, ...changes].join(' · '));
+    }
     const extraImages = String(form.get('extra_images') ?? '').split('\n');
     await saveProductImages(id, extraImages);
     await saveProductVariants(id, parseVariantsForm(form));

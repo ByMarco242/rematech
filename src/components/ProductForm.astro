@@ -71,6 +71,10 @@ const label = 'mb-1.5 block text-sm font-medium text-neutral-700';
           <label for="screen" class={label}>Pantalla</label>
           <input id="screen" name="screen" value={product.screen ?? ''} class={input} placeholder='Ej: 16" 2K 165Hz' />
         </div>
+        <div class="sm:col-span-2">
+          <label for="gpu" class={label}>Placa de video (GPU)</label>
+          <input id="gpu" name="gpu" value={product.gpu ?? ''} class={input} placeholder="Ej: NVIDIA RTX 4060 8GB · o «Integrada Intel Iris Xe»" />
+        </div>
       </div>
     </div>
 

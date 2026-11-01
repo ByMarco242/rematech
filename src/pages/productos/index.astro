@@ -3,32 +3,51 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import ProductCard from '../../components/ProductCard.astro';
 import { getDb, type Product, type Category } from '../../lib/db';
 import { getWishlistedIds } from '../../lib/wishlist';
+import { cpuFamily, gpuModel, ramGb, storageGb, formatStorage } from '../../lib/specs';
 
 const db = await getDb();
 const wishlistedIds = Astro.locals.user ? await getWishlistedIds(Astro.locals.user.id) : new Set<number>();
 
-const q = Astro.url.searchParams.get('q')?.trim() ?? '';
-const categorySlug = Astro.url.searchParams.get('categoria') ?? '';
-const orden = Astro.url.searchParams.get('orden') ?? 'nuevo';
-const marca = Astro.url.searchParams.get('marca')?.trim() ?? '';
-const min = Math.max(Number(Astro.url.searchParams.get('min')) || 0, 0);
-const max = Math.max(Number(Astro.url.searchParams.get('max')) || 0, 0);
-const soloStock = Astro.url.searchParams.get('stock') === '1';
+const params = Astro.url.searchParams;
+const q = params.get('q')?.trim() ?? '';
+const categorySlug = params.get('categoria') ?? '';
+const orden = params.get('orden') ?? 'nuevo';
+const marca = params.get('marca')?.trim() ?? '';
+const min = Math.max(Number(params.get('min')) || 0, 0);
+const max = Math.max(Number(params.get('max')) || 0, 0);
+const soloStock = params.get('stock') === '1';
+const soloOferta = params.get('oferta') === '1';
+const cpus = params.getAll('cpu');
+const gpus = params.getAll('gpu');
+const rams = params.getAll('ram').map(Number).filter(Boolean);
+const storages = params.getAll('ssd').map(Number).filter(Boolean);
 
-const [categoriesRes, brandsRes] = await Promise.all([
+const [categoriesRes, allRes] = await Promise.all([
   db.execute('SELECT * FROM categories ORDER BY name'),
-  db.execute("SELECT DISTINCT brand FROM products WHERE brand != '' ORDER BY brand"),
+  db.execute('SELECT brand, cpu, gpu, ram, storage FROM products'),
 ]);
 const categories = categoriesRes.rows as unknown as Category[];
-const brands = brandsRes.rows.map((r) => String(r.brand));
+const all = allRes.rows as unknown as Pick<Product, 'brand' | 'cpu' | 'gpu' | 'ram' | 'storage'>[];
+
+// Opciones de filtro derivadas de los datos cargados (con cantidad por opción)
+function tally<T extends string | number>(values: (T | null)[]) {
+  const map = new Map<T, number>();
+  for (const v of values) if (v != null && v !== '') map.set(v, (map.get(v) ?? 0) + 1);
+  return [...map.entries()];
+}
+const brandOptions = tally(all.map((p) => p.brand)).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+const cpuOptions = tally(all.map((p) => cpuFamily(p.cpu))).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+const gpuOptions = tally(all.map((p) => gpuModel(p.gpu))).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+const ramOptions = tally(all.map((p) => ramGb(p.ram))).sort((a, b) => a[0] - b[0]);
+const storageOptions = tally(all.map((p) => storageGb(p.storage))).sort((a, b) => a[0] - b[0]);
 
 let sql = `SELECT p.*, c.name AS category_name, c.slug AS category_slug
            FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE 1=1`;
 const args: (string | number)[] = [];
 
 if (q) {
-  sql += ' AND (p.name LIKE ? OR p.brand LIKE ? OR p.description LIKE ?)';
-  args.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  sql += ' AND (p.name LIKE ? OR p.brand LIKE ? OR p.description LIKE ? OR p.cpu LIKE ? OR p.gpu LIKE ?)';
+  args.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
 }
 if (categorySlug) {
   sql += ' AND c.slug = ?';
@@ -46,120 +65,257 @@ if (max > 0) {
   sql += ' AND p.price <= ?';
   args.push(max);
 }
-if (soloStock) {
-  sql += ' AND p.stock > 0';
-}
-
-const hasFilters = Boolean(q || categorySlug || marca || min > 0 || max > 0 || soloStock);
+if (soloStock) sql += ' AND p.stock > 0';
+if (soloOferta) sql += ' AND p.old_price > p.price';
 
 if (orden === 'precio-asc') sql += ' ORDER BY p.price ASC';
 else if (orden === 'precio-desc') sql += ' ORDER BY p.price DESC';
 else sql += ' ORDER BY p.created_at DESC, p.id DESC';
 
 const productsRes = await db.execute({ sql, args });
-const products = productsRes.rows as unknown as Product[];
+// CPU, RAM y almacenamiento son texto libre: se filtran ya normalizados
+const products = (productsRes.rows as unknown as Product[]).filter(
+  (p) =>
+    (cpus.length === 0 || cpus.includes(cpuFamily(p.cpu) ?? '')) &&
+    (gpus.length === 0 || gpus.includes(gpuModel(p.gpu) ?? '')) &&
+    (rams.length === 0 || rams.includes(ramGb(p.ram) ?? -1)) &&
+    (storages.length === 0 || storages.includes(storageGb(p.storage) ?? -1))
+);
+
+const category = categories.find((c) => c.slug === categorySlug);
+const title = soloOferta ? 'Ofertas' : (category?.name ?? 'Notebooks');
+
+// Filtros activos como chips removibles
+const fmtGs = (n: number) => `Gs. ${n.toLocaleString('es-PY')}`;
+function without(key: string, value?: string) {
+  const next = new URLSearchParams(params);
+  if (value === undefined) next.delete(key);
+  else {
+    const rest = next.getAll(key).filter((v) => v !== value);
+    next.delete(key);
+    rest.forEach((v) => next.append(key, v));
+  }
+  const s = next.toString();
+  return s ? `/productos?${s}` : '/productos';
+}
+const chips: { label: string; href: string }[] = [
+  ...(q ? [{ label: `«${q}»`, href: without('q') }] : []),
+  ...(category ? [{ label: category.name, href: without('categoria') }] : []),
+  ...(marca ? [{ label: marca, href: without('marca') }] : []),
+  ...(min > 0 ? [{ label: `Desde ${fmtGs(min)}`, href: without('min') }] : []),
+  ...(max > 0 ? [{ label: `Hasta ${fmtGs(max)}`, href: without('max') }] : []),
+  ...cpus.map((c) => ({ label: c, href: without('cpu', c) })),
+  ...gpus.map((g) => ({ label: g, href: without('gpu', g) })),
+  ...rams.map((r) => ({ label: `${r} GB RAM`, href: without('ram', String(r)) })),
+  ...storages.map((s) => ({ label: formatStorage(s), href: without('ssd', String(s)) })),
+  ...(soloStock ? [{ label: 'Con stock', href: without('stock') }] : []),
+  ...(soloOferta ? [{ label: 'En oferta', href: without('oferta') }] : []),
+];
+
+const groupTitle = 'eyebrow mb-2 text-fg-subtle';
+const optionRow = 'flex cursor-pointer items-center gap-2.5 py-1 text-sm text-fg-muted hover:text-fg has-checked:text-fg';
 ---
 
-<BaseLayout title="Notebooks — NoteStore">
-  <div class="mx-auto max-w-7xl px-4 py-12 sm:px-6">
-    <h1 class="text-3xl font-bold tracking-tight">Todas las notebooks</h1>
-    <p class="mt-2 text-neutral-500">
-      {products.length} {products.length === 1 ? 'resultado' : 'resultados'}
-      {q && <span> para «{q}»</span>}
-    </p>
-
-    <form method="GET" class="mt-8 flex flex-wrap items-center gap-3">
-      <div class="relative min-w-60 flex-1">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute top-1/2 left-4 size-4.5 -translate-y-1/2 text-neutral-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <input
-          type="search"
-          name="q"
-          value={q}
-          placeholder="Buscar por nombre, marca..."
-          class="w-full rounded-full border border-neutral-200 bg-white py-2.5 pr-4 pl-11 text-sm shadow-sm outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
-        />
+<BaseLayout title={`${title} — NoteStore`}>
+  <div class="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+    <nav aria-label="Ruta" class="text-xs text-fg-subtle">
+      <a href="/" class="hover:text-fg">Inicio</a> / <span class="text-fg-muted">Notebooks</span>
+    </nav>
+    <div class="mt-3 flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5">
+      <div>
+        <h1 class="font-display text-4xl font-extrabold uppercase sm:text-5xl">{title}</h1>
+        <p class="mt-1 font-mono text-xs text-fg-muted" aria-live="polite">
+          {products.length} {products.length === 1 ? 'resultado' : 'resultados'}
+        </p>
       </div>
-      <select
-        name="categoria"
-        class="rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:border-neutral-500"
-      >
-        <option value="">Todas las categorías</option>
-        {categories.map((c) => (
-          <option value={c.slug} selected={c.slug === categorySlug}>{c.name}</option>
-        ))}
-      </select>
-      {brands.length > 0 && (
-        <select
-          name="marca"
-          class="rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:border-neutral-500"
-        >
-          <option value="">Todas las marcas</option>
-          {brands.map((b) => (
-            <option value={b} selected={b === marca}>{b}</option>
-          ))}
+      <div class="flex items-center gap-2">
+        <button type="button" class="btn btn-secondary lg:hidden" data-open-dialog="filters" aria-controls="filters">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+          Filtros{chips.length > 0 && <span class="font-mono text-accent">{chips.length}</span>}
+        </button>
+        <label for="orden" class="sr-only">Ordenar por</label>
+        <select id="orden" name="orden" form="filters-form" class="field w-auto py-2" data-autosubmit>
+          <option value="nuevo" selected={orden === 'nuevo'}>Más nuevos</option>
+          <option value="precio-asc" selected={orden === 'precio-asc'}>Menor precio</option>
+          <option value="precio-desc" selected={orden === 'precio-desc'}>Mayor precio</option>
         </select>
-      )}
-      <select
-        name="orden"
-        class="rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm shadow-sm outline-none focus:border-neutral-500"
-      >
-        <option value="nuevo" selected={orden === 'nuevo'}>Más nuevos</option>
-        <option value="precio-asc" selected={orden === 'precio-asc'}>Menor precio</option>
-        <option value="precio-desc" selected={orden === 'precio-desc'}>Mayor precio</option>
-      </select>
-      <div class="flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm shadow-sm">
-        <span class="text-neutral-500">Gs.</span>
-        <input
-          type="number"
-          name="min"
-          value={min > 0 ? min : ''}
-          placeholder="Mínimo"
-          min="0"
-          step="100000"
-          class="w-24 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-        />
-        <span class="text-neutral-300">—</span>
-        <input
-          type="number"
-          name="max"
-          value={max > 0 ? max : ''}
-          placeholder="Máximo"
-          min="0"
-          step="100000"
-          class="w-24 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-        />
       </div>
-      <label class="flex cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm shadow-sm">
-        <input type="checkbox" name="stock" value="1" checked={soloStock} class="accent-neutral-900" />
-        Solo con stock
-      </label>
-      <button
-        type="submit"
-        class="cursor-pointer rounded-full bg-neutral-900 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-neutral-700"
-      >
-        Filtrar
-      </button>
-      {hasFilters && (
-        <a href="/productos" class="text-sm font-semibold text-neutral-500 hover:text-neutral-900 hover:underline">
-          Limpiar filtros
-        </a>
-      )}
-    </form>
+    </div>
 
-    {products.length === 0 ? (
-      <div class="mt-16 rounded-2xl border border-dashed border-neutral-300 p-16 text-center">
-        <p class="text-lg font-semibold text-neutral-700">No encontramos resultados</p>
-        <p class="mt-1 text-neutral-500">Probá con otra búsqueda o quitá los filtros.</p>
-        <a href="/productos" class="mt-5 inline-block rounded-full bg-neutral-900 px-6 py-2.5 text-sm font-semibold text-white hover:bg-neutral-700">
-          Ver todo el catálogo
-        </a>
-      </div>
-    ) : (
-      <div class="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4" data-reveal-group>
-        {products.map((p) => (
-          <ProductCard product={p} wishlisted={wishlistedIds.has(p.id)} />
+    {chips.length > 0 && (
+      <ul class="mt-4 flex flex-wrap items-center gap-2" aria-label="Filtros activos">
+        {chips.map((c) => (
+          <li>
+            <a href={c.href} class="flex items-center gap-1.5 border border-line-strong px-2.5 py-1 text-xs text-fg hover:border-accent" aria-label={`Quitar filtro ${c.label}`}>
+              {c.label}
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="size-3 text-fg-subtle" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </a>
+          </li>
         ))}
-      </div>
+        <li><a href="/productos" class="px-1 text-xs text-fg-muted underline-offset-2 hover:text-fg hover:underline">Limpiar todo</a></li>
+      </ul>
     )}
+
+    <div class="mt-6 grid gap-8 lg:grid-cols-[15rem_1fr]">
+      <dialog
+        id="filters"
+        aria-label="Filtros"
+        class="drawer drawer-left lg:static lg:block lg:h-auto lg:w-auto lg:bg-transparent lg:animate-none"
+      >
+        <form id="filters-form" method="GET" action="/productos" class="flex h-full flex-col">
+          <div class="flex h-14 items-center justify-between border-b border-line px-4 lg:hidden">
+            <span class="font-semibold">Filtros</span>
+            <button type="button" class="flex size-9 cursor-pointer items-center justify-center text-fg-muted hover:text-fg" aria-label="Cerrar filtros" data-close-dialog>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-5" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          </div>
+
+          <div class="flex-1 space-y-6 overflow-y-auto p-4 lg:overflow-visible lg:p-0">
+            <div>
+              <label for="f-q" class={groupTitle}>Buscar</label>
+              <input id="f-q" type="search" name="q" value={q} placeholder="Modelo, marca, CPU" class="field mt-2" />
+            </div>
+
+            <fieldset>
+              <legend class={groupTitle}>Uso</legend>
+              <label class={optionRow}>
+                <input type="radio" name="categoria" value="" checked={!categorySlug} data-autosubmit /> Todos
+              </label>
+              {categories.map((c) => (
+                <label class={optionRow}>
+                  <input type="radio" name="categoria" value={c.slug} checked={c.slug === categorySlug} data-autosubmit /> {c.name}
+                </label>
+              ))}
+            </fieldset>
+
+            <fieldset>
+              <legend class={groupTitle}>Precio (Gs.)</legend>
+              <div class="flex items-center gap-2">
+                <label class="sr-only" for="f-min">Precio mínimo</label>
+                <input id="f-min" type="number" inputmode="numeric" name="min" value={min > 0 ? min : ''} placeholder="Mín." min="0" step="100000" class="field px-2.5 font-mono text-xs" />
+                <span class="text-fg-subtle" aria-hidden="true">–</span>
+                <label class="sr-only" for="f-max">Precio máximo</label>
+                <input id="f-max" type="number" inputmode="numeric" name="max" value={max > 0 ? max : ''} placeholder="Máx." min="0" step="100000" class="field px-2.5 font-mono text-xs" />
+              </div>
+            </fieldset>
+
+            {cpuOptions.length > 0 && (
+              <fieldset>
+                <legend class={groupTitle}>Procesador</legend>
+                {cpuOptions.map(([name, n]) => (
+                  <label class={optionRow}>
+                    <input type="checkbox" name="cpu" value={name} checked={cpus.includes(name)} data-autosubmit />
+                    <span class="flex-1">{name}</span><span class="font-mono text-xs text-fg-subtle">{n}</span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
+
+            {gpuOptions.length > 0 && (
+              <fieldset>
+                <legend class={groupTitle}>Placa de video</legend>
+                {gpuOptions.map(([name, n]) => (
+                  <label class={optionRow}>
+                    <input type="checkbox" name="gpu" value={name} checked={gpus.includes(name)} data-autosubmit />
+                    <span class="flex-1">{name}</span><span class="font-mono text-xs text-fg-subtle">{n}</span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
+
+            {ramOptions.length > 0 && (
+              <fieldset>
+                <legend class={groupTitle}>Memoria RAM</legend>
+                <div class="grid grid-cols-2 gap-x-3">
+                  {ramOptions.map(([gb, n]) => (
+                    <label class={optionRow}>
+                      <input type="checkbox" name="ram" value={gb} checked={rams.includes(gb)} data-autosubmit />
+                      <span class="flex-1 font-mono text-xs">{gb} GB</span><span class="font-mono text-xs text-fg-subtle">{n}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+
+            {storageOptions.length > 0 && (
+              <fieldset>
+                <legend class={groupTitle}>Almacenamiento</legend>
+                <div class="grid grid-cols-2 gap-x-3">
+                  {storageOptions.map(([gb, n]) => (
+                    <label class={optionRow}>
+                      <input type="checkbox" name="ssd" value={gb} checked={storages.includes(gb)} data-autosubmit />
+                      <span class="flex-1 font-mono text-xs">{formatStorage(gb)}</span><span class="font-mono text-xs text-fg-subtle">{n}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+
+            {brandOptions.length > 0 && (
+              <fieldset>
+                <legend class={groupTitle}>Marca</legend>
+                <label class={optionRow}>
+                  <input type="radio" name="marca" value="" checked={!marca} data-autosubmit /> Todas
+                </label>
+                {brandOptions.map(([name, n]) => (
+                  <label class={optionRow}>
+                    <input type="radio" name="marca" value={name} checked={name === marca} data-autosubmit />
+                    <span class="flex-1">{name}</span><span class="font-mono text-xs text-fg-subtle">{n}</span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
+
+            <fieldset>
+              <legend class={groupTitle}>Disponibilidad</legend>
+              <label class={optionRow}>
+                <input type="checkbox" name="stock" value="1" checked={soloStock} data-autosubmit /> Solo con stock
+              </label>
+              <label class={optionRow}>
+                <input type="checkbox" name="oferta" value="1" checked={soloOferta} data-autosubmit /> Solo ofertas
+              </label>
+            </fieldset>
+          </div>
+
+          <div class="flex gap-2 border-t border-line p-4 lg:mt-6 lg:border-0 lg:p-0">
+            <a href="/productos" class="btn btn-secondary flex-1 lg:hidden">Limpiar</a>
+            <button type="submit" class="btn btn-primary flex-1">Aplicar filtros</button>
+          </div>
+        </form>
+      </dialog>
+
+      <section aria-label="Resultados">
+        {products.length === 0 ? (
+          <div class="border border-dashed border-line-strong p-12 text-center">
+            <p class="font-semibold">No hay equipos con esos filtros</p>
+            <p class="mt-1 text-sm text-fg-muted">Probá quitando alguno de los filtros activos.</p>
+            <a href="/productos" class="btn btn-secondary mt-5">Ver todo el catálogo</a>
+          </div>
+        ) : (
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {products.map((p, i) => (
+              <ProductCard product={p} wishlisted={wishlistedIds.has(p.id)} eager={i < 3} />
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
   </div>
+
+  <script is:inline>
+    (() => {
+      const form = document.getElementById('filters-form');
+      const desktop = window.matchMedia('(min-width: 1024px)');
+      document.querySelectorAll('[data-autosubmit]').forEach((el) => {
+        el.addEventListener('change', () => {
+          // En móvil se aplica con el botón del drawer; el orden siempre se aplica al instante
+          if (desktop.matches || el.id === 'orden') form.requestSubmit();
+        });
+      });
+      // Los campos vacíos no ensucian la URL
+      form.addEventListener('formdata', (e) => {
+        for (const [k, v] of [...e.formData.entries()]) if (v === '') e.formData.delete(k);
+      });
+    })();
+  </script>
 </BaseLayout>

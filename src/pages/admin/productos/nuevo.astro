@@ -2,6 +2,7 @@
 import AdminLayout from '../../../layouts/AdminLayout.astro';
 import ProductForm from '../../../components/ProductForm.astro';
 import { getDb, type Category } from '../../../lib/db';
+import { logAudit } from '../../../lib/audit';
 import { parseProductForm, uniqueProductSlug, saveProductImages, saveProductVariants, parseVariantsForm } from '../../../lib/products';
 
 const db = await getDb();
@@ -21,14 +22,15 @@ if (Astro.request.method === 'POST') {
     const insertRes = await db.execute({
       sql: `INSERT INTO products
               (name, slug, brand, description, price, old_price, cost, image_url,
-               category_id, cpu, ram, storage, screen, stock, min_stock, featured)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               category_id, cpu, ram, storage, screen, gpu, stock, min_stock, featured)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         d.name, slug, d.brand, d.description, d.price, d.old_price, d.cost, d.image_url,
-        d.category_id, d.cpu, d.ram, d.storage, d.screen, d.stock, d.min_stock, d.featured,
+        d.category_id, d.cpu, d.ram, d.storage, d.screen, d.gpu, d.stock, d.min_stock, d.featured,
       ],
     });
     const newId = Number(insertRes.lastInsertRowid);
+    await logAudit(Astro.locals.user!.name, 'Creó producto', 'producto', newId, `${d.name} · precio ${d.price} · stock ${d.stock}`);
     const extraImages = String(form.get('extra_images') ?? '').split('\n');
     await saveProductImages(newId, extraImages);
     await saveProductVariants(newId, parseVariantsForm(form));

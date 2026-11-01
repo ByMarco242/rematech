@@ -1,0 +1,257 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { formatPrice } from '../../lib/util';
+import { saveSetting } from '../../lib/orders';
+import { logAudit } from '../../lib/audit';
+import { monthlyFinance, getSalesGoal, projectMonth } from '../../lib/finance';
+import { localToday, monthLabel } from '../../lib/time';
+
+const me = Astro.locals.user!;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  if (form.get('_action') === 'goal') {
+    const goal = Math.max(Math.floor(Number(form.get('sales_goal')) || 0), 0);
+    await saveSetting('sales_goal', String(goal));
+    await logAudit(me.name, 'Cambió la meta de ventas mensual', 'caja', null, formatPrice(goal));
+  }
+  return Astro.redirect('/admin/finanzas');
+}
+
+const today = localToday();
+const months = await monthlyFinance(12);
+const goal = await getSalesGoal();
+const current = months[months.length - 1];
+const previous = months[months.length - 2];
+const { projection, day, days } = projectMonth(current.sales, today);
+
+// Punto de equilibrio con los 3 últimos meses cerrados
+const closed = months.slice(-4, -1);
+const sum = (k: 'sales' | 'gross' | 'expenses') => closed.reduce((a, m) => a + m[k], 0);
+const avgExpenses = Math.round(sum('expenses') / closed.length);
+const avgSales = Math.round(sum('sales') / closed.length);
+const grossMargin = sum('sales') > 0 ? sum('gross') / sum('sales') : null;
+const breakEven = grossMargin && grossMargin > 0 ? Math.round(avgExpenses / grossMargin) : null;
+
+const totals = months.reduce(
+  (a, m) => ({
+    sales: a.sales + m.sales, cogs: a.cogs + m.cogs, gross: a.gross + m.gross, expenses: a.expenses + m.expenses,
+    net: a.net + m.net, purchases: a.purchases + m.purchases, cashFlow: a.cashFlow + m.cashFlow,
+  }),
+  { sales: 0, cogs: 0, gross: 0, expenses: 0, net: 0, purchases: 0, cashFlow: 0 }
+);
+const categories = [...new Set(months.flatMap((m) => Object.keys(m.expensesByCategory)))].sort();
+const pct = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '—');
+const money = (n: number) => (n === 0 ? '—' : formatPrice(n));
+const goalPct = goal > 0 ? Math.min(Math.round((current.sales / goal) * 100), 100) : 0;
+const projectionPct = goal > 0 ? Math.round((projection / goal) * 100) : 0;
+
+let running = 0;
+const flow = months.map((m) => {
+  running += m.cashFlow;
+  return { ...m, accumulated: running };
+});
+const maxFlow = Math.max(...months.map((m) => Math.max(m.sales, m.expenses + m.purchases)), 1);
+
+const catRows = categories.map((c) => {
+  const now = current.expensesByCategory[c] ?? 0;
+  const avg = Math.round(closed.reduce((a, m) => a + (m.expensesByCategory[c] ?? 0), 0) / closed.length);
+  return { name: c, now, avg, over: avg > 0 && now > avg * 1.2 };
+}).sort((a, b) => b.now - a.now);
+
+const goalText = goal > 0
+  ? `${goalPct}% de ${formatPrice(goal)} · proyección ${formatPrice(projection)} (${projectionPct}%)`
+  : 'Definí una meta para seguir el avance del mes';
+const breakEvenText = breakEven == null
+  ? 'Hace falta al menos un mes con ventas y costos cargados.'
+  : avgSales >= breakEven
+    ? `Vendés en promedio ${formatPrice(avgSales)}: ${formatPrice(avgSales - breakEven)} por encima del equilibrio.`
+    : `Vendés en promedio ${formatPrice(avgSales)}: faltan ${formatPrice(breakEven - avgSales)} por mes para cubrir gastos.`;
+const ivaBalance = current.ivaDebit - current.ivaCredit;
+const ivaPrevBalance = previous.ivaDebit - previous.ivaCredit;
+
+const card = 'min-w-0 rounded-2xl border border-neutral-200 bg-white p-5';
+const th = 'px-3 py-2 text-right font-medium whitespace-nowrap';
+const td = 'px-3 py-2 text-right whitespace-nowrap tabular-nums';
+const rowHead = 'sticky left-0 z-10 bg-white px-3 py-2 text-left font-medium whitespace-nowrap';
+---
+
+<AdminLayout title="Finanzas — NoteStore admin">
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">Finanzas</h1>
+      <p class="mt-1 text-sm text-neutral-500">
+        Estado de resultados, flujo de caja, punto de equilibrio e IVA estimado. Meses en hora de Paraguay.
+      </p>
+    </div>
+    <a href="/admin/finanzas.csv" class="rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold hover:border-neutral-500">
+      Exportar estado de resultados (CSV)
+    </a>
+  </div>
+
+  {current.unitsNoCost + previous.unitsNoCost > 0 && (
+    <p class="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+      Hay unidades vendidas sin costo cargado en los últimos dos meses: la ganancia de esos meses aparece más alta de lo real.
+      Registrá las compras en <a href="/admin/compras" class="font-semibold underline">Compras</a> o cargá el costo en cada producto.
+    </p>
+  )}
+
+  <!-- Mes en curso -->
+  <section class="mt-6" aria-labelledby="mes-title">
+    <h2 id="mes-title" class="text-xs font-semibold tracking-wide text-neutral-500 uppercase">{monthLabel(current.ym, true)} · día {day} de {days}</h2>
+    <div class="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div class:list={[card, 'col-span-2']}>
+        <div class="flex items-baseline justify-between gap-2">
+          <p class="text-sm text-neutral-500">Ventas del mes</p>
+          <p class="text-2xl font-bold tabular-nums">{formatPrice(current.sales)}</p>
+        </div>
+        {goal > 0 && (
+          <div class="relative mt-3 h-2.5 overflow-hidden rounded-full bg-neutral-100">
+            <div class="absolute inset-y-0 left-0 bg-neutral-300" style={`width: ${Math.min(projectionPct, 100)}%`}></div>
+            <div class="absolute inset-y-0 left-0 bg-neutral-900" style={`width: ${goalPct}%`}></div>
+          </div>
+        )}
+        <p class="mt-2 text-xs text-neutral-500">{goalText}</p>
+        <form method="POST" class="mt-3 flex gap-2">
+          <input type="hidden" name="_action" value="goal" />
+          <label for="sales_goal" class="sr-only">Meta de ventas mensual</label>
+          <input id="sales_goal" name="sales_goal" type="number" min="0" step="100000" value={goal || ''} placeholder="Meta mensual (Gs.)" class="min-w-0 flex-1 rounded-lg border border-neutral-200 px-3 py-1.5 text-sm" />
+          <button type="submit" class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold hover:border-neutral-500">Guardar meta</button>
+        </form>
+      </div>
+      <div class={card}>
+        <p class="text-sm text-neutral-500">Ganancia bruta</p>
+        <p class="mt-1 text-xl font-bold tabular-nums">{formatPrice(current.gross)}</p>
+        <p class="text-xs text-neutral-500">Margen {pct(current.gross, current.sales)}</p>
+      </div>
+      <div class={card}>
+        <p class="text-sm text-neutral-500">Gastos</p>
+        <p class="mt-1 text-xl font-bold tabular-nums">{formatPrice(current.expenses)}</p>
+        <p class="text-xs text-neutral-500">Mes pasado {formatPrice(previous.expenses)}</p>
+      </div>
+      <div class={card}>
+        <p class="text-sm text-neutral-500">Resultado neto</p>
+        <p class:list={['mt-1 text-xl font-bold tabular-nums', current.net < 0 && 'text-rose-700']}>{formatPrice(current.net)}</p>
+        <p class="text-xs text-neutral-500">Flujo de caja {formatPrice(current.cashFlow)}</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="mt-3 grid gap-3 lg:grid-cols-2">
+    <div class={card}>
+      <p class="text-sm font-semibold">Punto de equilibrio</p>
+      <p class="text-xs text-neutral-500">Promedio de los últimos 3 meses cerrados</p>
+      <dl class="mt-3 grid grid-cols-3 gap-3 text-sm">
+        <div><dt class="text-neutral-500">Gastos fijos</dt><dd class="font-semibold tabular-nums">{formatPrice(avgExpenses)}</dd></div>
+        <div><dt class="text-neutral-500">Margen bruto</dt><dd class="font-semibold tabular-nums">{grossMargin == null ? '—' : `${Math.round(grossMargin * 100)}%`}</dd></div>
+        <div><dt class="text-neutral-500">Ventas mínimas</dt><dd class="font-semibold tabular-nums">{breakEven == null ? '—' : formatPrice(breakEven)}</dd></div>
+      </dl>
+      <p class:list={['mt-3 text-sm', breakEven != null && avgSales < breakEven ? 'text-rose-700' : 'text-neutral-600']}>{breakEvenText}</p>
+    </div>
+    <div class={card}>
+      <p class="text-sm font-semibold">IVA estimado (10 %)</p>
+      <p class="text-xs text-neutral-500">Débito de ventas − crédito de compras con factura. Es una estimación: confirmalo con tu contador.</p>
+      <table class="mt-3 w-full text-sm">
+        <thead class="text-xs text-neutral-500"><tr><th class="text-left font-medium"></th><th class={th}>{monthLabel(previous.ym)}</th><th class={th}>{monthLabel(current.ym)}</th></tr></thead>
+        <tbody>
+          <tr><td class="py-1 text-neutral-500">IVA débito (ventas)</td><td class={td}>{formatPrice(previous.ivaDebit)}</td><td class={td}>{formatPrice(current.ivaDebit)}</td></tr>
+          <tr><td class="py-1 text-neutral-500">IVA crédito (compras)</td><td class={td}>− {formatPrice(previous.ivaCredit)}</td><td class={td}>− {formatPrice(current.ivaCredit)}</td></tr>
+          <tr class="border-t border-neutral-100 font-semibold"><td class="py-1">Saldo a pagar</td><td class={td}>{formatPrice(ivaPrevBalance)}</td><td class={td}>{formatPrice(ivaBalance)}</td></tr>
+        </tbody>
+      </table>
+      <p class="mt-2 text-xs text-neutral-400">Los gastos con factura también dan crédito fiscal, pero hoy no se registra si tienen factura.</p>
+    </div>
+  </section>
+
+  <!-- Estado de resultados -->
+  <section class="mt-8" aria-labelledby="eerr-title">
+    <h2 id="eerr-title" class="text-xs font-semibold tracking-wide text-neutral-500 uppercase">Estado de resultados · últimos 12 meses</h2>
+    <div class="mt-3 overflow-x-auto rounded-2xl border border-neutral-200 bg-white">
+      <table class="w-full text-sm">
+        <thead class="border-b border-neutral-200 bg-neutral-50 text-xs text-neutral-500 uppercase">
+          <tr>
+            <th class="sticky left-0 z-10 bg-neutral-50 px-3 py-2 text-left font-medium">Concepto</th>
+            {months.map((m) => <th class={th}>{monthLabel(m.ym, true)}</th>)}
+            <th class:list={[th, 'bg-neutral-100']}>12 meses</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-neutral-100">
+          <tr><th class={rowHead}>Ventas</th>{months.map((m) => <td class={td}>{money(m.sales)}</td>)}<td class:list={[td, 'bg-neutral-50 font-semibold']}>{money(totals.sales)}</td></tr>
+          <tr><th class:list={[rowHead, 'font-normal text-neutral-500']}>− Costo de mercadería</th>{months.map((m) => <td class:list={[td, 'text-neutral-500']}>{money(m.cogs)}</td>)}<td class:list={[td, 'bg-neutral-50']}>{money(totals.cogs)}</td></tr>
+          <tr class="bg-neutral-50/60"><th class:list={[rowHead, 'bg-neutral-50']}>Ganancia bruta</th>{months.map((m) => <td class:list={[td, 'font-semibold']}>{money(m.gross)}</td>)}<td class:list={[td, 'bg-neutral-100 font-semibold']}>{money(totals.gross)}</td></tr>
+          <tr><th class:list={[rowHead, 'font-normal text-neutral-500']}>Margen bruto</th>{months.map((m) => <td class:list={[td, 'text-neutral-500']}>{pct(m.gross, m.sales)}</td>)}<td class:list={[td, 'bg-neutral-50']}>{pct(totals.gross, totals.sales)}</td></tr>
+          {categories.map((c) => (
+            <tr><th class:list={[rowHead, 'pl-6 font-normal text-neutral-500']}>− {c}</th>{months.map((m) => <td class:list={[td, 'text-neutral-500']}>{money(m.expensesByCategory[c] ?? 0)}</td>)}<td class:list={[td, 'bg-neutral-50']}>{money(months.reduce((a, m) => a + (m.expensesByCategory[c] ?? 0), 0))}</td></tr>
+          ))}
+          <tr><th class={rowHead}>Gastos operativos</th>{months.map((m) => <td class={td}>{money(m.expenses)}</td>)}<td class:list={[td, 'bg-neutral-50 font-semibold']}>{money(totals.expenses)}</td></tr>
+          <tr class="bg-neutral-50/60">
+            <th class:list={[rowHead, 'bg-neutral-50']}>Resultado neto</th>
+            {months.map((m) => <td class:list={[td, 'font-bold', m.net < 0 && 'text-rose-700']}>{money(m.net)}</td>)}
+            <td class:list={[td, 'bg-neutral-100 font-bold', totals.net < 0 && 'text-rose-700']}>{money(totals.net)}</td>
+          </tr>
+          <tr><th class:list={[rowHead, 'font-normal text-neutral-500']}>Margen neto</th>{months.map((m) => <td class:list={[td, 'text-neutral-500']}>{pct(m.net, m.sales)}</td>)}<td class:list={[td, 'bg-neutral-50']}>{pct(totals.net, totals.sales)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Flujo de caja -->
+  <section class="mt-8 grid gap-3 lg:grid-cols-5" aria-labelledby="flujo-title">
+    <div class:list={[card, 'lg:col-span-3']}>
+      <h2 id="flujo-title" class="text-sm font-semibold">Flujo de caja</h2>
+      <p class="text-xs text-neutral-500">Entradas (ventas) contra salidas (gastos + compras de mercadería)</p>
+      <div class="mt-4 grid h-44 grid-cols-12 items-end gap-1.5">
+        {flow.map((m) => (
+          <div class="flex h-full flex-col justify-end gap-1" title={`${monthLabel(m.ym, true)} · entradas ${formatPrice(m.sales)} · salidas ${formatPrice(m.expenses + m.purchases)}`}>
+            <div class="flex flex-1 items-end gap-0.5">
+              <div class="flex-1 rounded-t bg-neutral-900" style={`height: ${(m.sales / maxFlow) * 100}%`}></div>
+              <div class="flex-1 rounded-t bg-rose-300" style={`height: ${((m.expenses + m.purchases) / maxFlow) * 100}%`}></div>
+            </div>
+            <p class="text-center text-[10px] text-neutral-500 capitalize">{monthLabel(m.ym)}</p>
+          </div>
+        ))}
+      </div>
+      <p class="mt-3 flex gap-4 text-xs text-neutral-500">
+        <span class="flex items-center gap-1.5"><span class="size-2.5 rounded-sm bg-neutral-900"></span>Entradas</span>
+        <span class="flex items-center gap-1.5"><span class="size-2.5 rounded-sm bg-rose-300"></span>Salidas</span>
+      </p>
+    </div>
+    <div class:list={[card, 'lg:col-span-2']}>
+      <p class="text-sm font-semibold">Saldo por mes</p>
+      <ul class="mt-3 divide-y divide-neutral-100 text-sm">
+        {flow.slice(-6).reverse().map((m) => (
+          <li class="flex items-center justify-between gap-3 py-1.5">
+            <span class="text-neutral-500 capitalize">{monthLabel(m.ym, true)}</span>
+            <span class:list={['font-medium tabular-nums', m.cashFlow < 0 && 'text-rose-700']}>{formatPrice(m.cashFlow)}</span>
+            <span class="w-32 text-right text-xs text-neutral-500 tabular-nums">acum. {formatPrice(m.accumulated)}</span>
+          </li>
+        ))}
+      </ul>
+      <p class="mt-2 text-xs text-neutral-400">12 meses: {formatPrice(totals.cashFlow)} · compras {formatPrice(totals.purchases)}</p>
+    </div>
+  </section>
+
+  <!-- Gastos por categoría -->
+  <section class:list={[card, 'mt-3']} aria-labelledby="cat-title">
+    <div class="flex items-baseline justify-between gap-4">
+      <h2 id="cat-title" class="text-sm font-semibold">Gastos por categoría</h2>
+      <a href="/admin/gastos" class="text-sm font-semibold hover:underline">Gastos →</a>
+    </div>
+    {catRows.length === 0 ? (
+      <p class="mt-3 text-sm text-neutral-500">Todavía no hay gastos en los últimos 12 meses.</p>
+    ) : (
+      <table class="mt-3 w-full text-sm">
+        <thead class="text-xs text-neutral-500"><tr><th class="text-left font-medium">Categoría</th><th class={th}>Este mes</th><th class={th}>Promedio 3 meses</th></tr></thead>
+        <tbody class="divide-y divide-neutral-100">
+          {catRows.map((c) => (
+            <tr>
+              <td class="py-1.5">{c.name}{c.over && <span class="ml-2 rounded bg-amber-50 px-1.5 text-xs text-amber-700">+20% sobre el promedio</span>}</td>
+              <td class={td}>{formatPrice(c.now)}</td>
+              <td class:list={[td, 'text-neutral-500']}>{formatPrice(c.avg)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}
+  </section>
+</AdminLayout>

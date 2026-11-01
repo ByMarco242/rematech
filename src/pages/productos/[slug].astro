@@ -1,11 +1,13 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import ProductCard from '../../components/ProductCard.astro';
+import Price from '../../components/Price.astro';
 import { getDb, type Product } from '../../lib/db';
 import { formatPrice } from '../../lib/util';
 import { getProductImages, getProductVariants } from '../../lib/products';
 import { getApprovedReviews, getProductRatingSummary, createReview } from '../../lib/reviews';
 import { isWishlisted, getWishlistedIds } from '../../lib/wishlist';
+import { stockLevel, stockLabel } from '../../lib/specs';
 
 const db = await getDb();
 const { slug } = Astro.params;
@@ -41,13 +43,15 @@ const relatedRes = await db.execute({
 const related = relatedRes.rows as unknown as Product[];
 
 const specs = [
+  { label: 'Marca', value: product.brand },
+  { label: 'Modelo', value: product.name },
+  { label: 'Uso', value: product.category_name ?? '' },
   { label: 'Procesador', value: product.cpu },
+  { label: 'Placa de video', value: product.gpu },
   { label: 'Memoria RAM', value: product.ram },
   { label: 'Almacenamiento', value: product.storage },
   { label: 'Pantalla', value: product.screen },
 ].filter((s) => s.value);
-
-const onSale = product.old_price != null && product.old_price > product.price;
 
 const images = await getProductImages(product.id);
 const variants = await getProductVariants(product.id);
@@ -56,6 +60,10 @@ const rating = await getProductRatingSummary(product.id);
 const wishlisted = user ? await isWishlisted(user.id, product.id) : false;
 const myReview = user ? reviews.find((r) => r.user_id === user.id) : undefined;
 const relatedWishlistedIds = user ? await getWishlistedIds(user.id) : new Set<number>();
+
+const level = stockLevel(product.stock, product.min_stock);
+const soldOut = product.stock <= 0 && variants.length === 0;
+const unitsText = (n: number) => `${n} ${n === 1 ? 'unidad' : 'unidades'}`;
 
 const cartPayload = JSON.stringify({
   id: product.id,
@@ -91,96 +99,73 @@ const jsonLd = JSON.stringify({
   ogType="product"
 >
   <script is:inline type="application/ld+json" set:html={jsonLd} />
-  <div class="mx-auto max-w-7xl px-4 py-12 sm:px-6">
-    <nav class="flex items-center gap-2 text-sm text-neutral-500">
-      <a href="/" class="hover:text-neutral-900">Inicio</a>
-      <span>/</span>
-      <a href="/productos" class="hover:text-neutral-900">Notebooks</a>
+  <div class="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+    <nav aria-label="Ruta" class="text-xs text-fg-subtle">
+      <a href="/" class="hover:text-fg">Inicio</a> /
+      <a href="/productos" class="hover:text-fg">Notebooks</a>
       {product.category_name && (
-        <>
-          <span>/</span>
-          <a href={`/categorias/${product.category_slug}`} class="hover:text-neutral-900">
-            {product.category_name}
-          </a>
-        </>
+        <> / <a href={`/categorias/${product.category_slug}`} class="hover:text-fg">{product.category_name}</a></>
       )}
     </nav>
 
-    <div class="mt-8 grid gap-10 lg:grid-cols-2">
-      <div>
-        <div class="animate-fade-up relative overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-sm">
-          <img id="main-image" src={product.image_url} alt={product.name} class="aspect-[4/3] w-full object-cover" />
-          <button
-            type="button"
-            data-wishlist-toggle={product.id}
-            class:list={[
-              'wishlist-btn absolute top-4 right-4 flex size-10 cursor-pointer items-center justify-center rounded-full bg-white/90 text-neutral-500 shadow transition-colors hover:text-rose-500',
-              { 'is-wishlisted': wishlisted },
-            ]}
-            aria-label="Agregar a favoritos"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
-          </button>
-        </div>
-        {images.length > 0 && (
-          <div class="mt-3 grid grid-cols-5 gap-2">
-            <button type="button" class="thumb-btn overflow-hidden rounded-xl border-2 border-neutral-900" data-src={product.image_url}>
-              <img src={product.image_url} alt="" class="aspect-square w-full object-cover" />
-            </button>
-            {images.map((img) => (
-              <button type="button" class="thumb-btn overflow-hidden rounded-xl border-2 border-transparent" data-src={img.image_url}>
-                <img src={img.image_url} alt="" class="aspect-square w-full object-cover" />
+    <div class="mt-5 grid gap-8 lg:grid-cols-12 lg:gap-12">
+      <!-- Galería -->
+      <div class="lg:col-span-7">
+        <div class="lg:sticky lg:top-20">
+          <div class="border border-line bg-surface">
+            <img id="main-image" src={product.image_url} alt={product.name} width="1200" height="900" fetchpriority="high" class="aspect-[4/3] w-full object-cover" />
+          </div>
+          {images.length > 0 && (
+            <div class="mt-2 grid grid-cols-5 gap-2" role="group" aria-label="Fotos del producto">
+              <button type="button" class="thumb-btn cursor-pointer border border-accent" data-src={product.image_url} aria-label="Ver foto 1" aria-pressed="true">
+                <img src={product.image_url} alt="" loading="lazy" class="aspect-square w-full object-cover" />
               </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div class="animate-fade-up anim-delay-1 flex flex-col">
-        <p class="text-sm font-semibold tracking-wide text-neutral-900 uppercase">{product.brand}</p>
-        <h1 class="mt-2 text-3xl font-bold tracking-tight text-balance sm:text-4xl">{product.name}</h1>
-
-        {rating.count > 0 && (
-          <div class="mt-2 flex items-center gap-1.5 text-sm">
-            <span class="text-amber-500">{'★'.repeat(Math.round(rating.avg))}{'☆'.repeat(5 - Math.round(rating.avg))}</span>
-            <span class="text-neutral-500">{rating.avg.toFixed(1)} ({rating.count} {rating.count === 1 ? 'reseña' : 'reseñas'})</span>
-          </div>
-        )}
-
-        <div class="mt-5 flex items-end gap-3">
-          <p id="price-display" class="text-4xl font-extrabold">{formatPrice(product.price)}</p>
-          {onSale && (
-            <>
-              <p class="pb-1 text-lg text-neutral-400 line-through">{formatPrice(product.old_price!)}</p>
-              <span class="mb-1.5 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-600">
-                -{Math.round((1 - product.price / product.old_price!) * 100)}%
-              </span>
-            </>
+              {images.map((img, i) => (
+                <button type="button" class="thumb-btn cursor-pointer border border-line hover:border-line-strong" data-src={img.image_url} aria-label={`Ver foto ${i + 2}`} aria-pressed="false">
+                  <img src={img.image_url} alt="" loading="lazy" class="aspect-square w-full object-cover" />
+                </button>
+              ))}
+            </div>
           )}
         </div>
-        <p class="mt-1 text-sm text-neutral-500">Hasta 12 cuotas sin interés</p>
+      </div>
 
-        <p class="mt-6 leading-relaxed text-neutral-600">{product.description}</p>
+      <!-- Compra -->
+      <div class="flex flex-col lg:col-span-5">
+        <p class="eyebrow text-fg-subtle">
+          {product.brand}{product.category_name && <> · <span class="text-accent">{product.category_name}</span></>}
+        </p>
+        <h1 class="font-display mt-2 text-4xl leading-[0.95] font-extrabold uppercase sm:text-5xl">{product.name}</h1>
 
-        {specs.length > 0 && (
-          <dl class="mt-8 grid grid-cols-2 gap-3">
-            {specs.map((s) => (
-              <div class="rounded-xl border border-neutral-200 bg-white p-4">
-                <dt class="text-xs font-medium tracking-wide text-neutral-400 uppercase">{s.label}</dt>
-                <dd class="mt-1 text-sm font-semibold">{s.value}</dd>
-              </div>
-            ))}
-          </dl>
+        {rating.count > 0 && (
+          <a href="#resenas" class="mt-3 flex items-center gap-2 text-sm text-fg-muted hover:text-fg">
+            <span class="text-warn" aria-hidden="true">{'★'.repeat(Math.round(rating.avg))}{'☆'.repeat(5 - Math.round(rating.avg))}</span>
+            <span>{rating.avg.toFixed(1)} de 5 · {rating.count} {rating.count === 1 ? 'reseña' : 'reseñas'}</span>
+          </a>
         )}
 
+        <p class="mt-4 font-mono text-sm text-fg-muted">{[product.cpu, product.gpu, product.ram, product.storage].filter(Boolean).join('  ·  ')}</p>
+        <p class="mt-4 leading-relaxed text-fg-muted">{product.description}</p>
+
+        <div class="mt-6 border-t border-line pt-6">
+          <Price price={product.price} oldPrice={product.old_price} size="lg" id="price-display" />
+          <p class="mt-1 text-sm text-fg-muted">Hasta 12 cuotas sin interés</p>
+          <p id="stock-msg" class="mt-3 flex items-center gap-2 text-sm" data-level={variants.length ? undefined : level}>
+            {variants.length === 0 && (
+              <>
+                <span class:list={['size-2', { 'bg-ok': level === 'in', 'bg-warn': level === 'low', 'bg-fg-subtle': level === 'out' }]} aria-hidden="true"></span>
+                {stockLabel[level]}{level !== 'out' && <span class="text-fg-muted">· {unitsText(product.stock)}</span>}
+              </>
+            )}
+          </p>
+        </div>
+
         {variants.length > 0 && (
-          <div class="mt-8">
-            <p class="mb-2 text-sm font-semibold text-neutral-700">Elegí una opción</p>
+          <fieldset class="mt-6">
+            <legend class="eyebrow mb-2 text-fg-subtle">{variants[0].name || 'Opción'}</legend>
             <div id="variant-options" class="flex flex-wrap gap-2">
               {variants.map((v, i) => (
-                <label
-                  class="variant-opt cursor-pointer rounded-full border-2 border-neutral-200 px-4 py-2 text-sm font-medium transition-colors has-checked:border-neutral-900 has-checked:bg-neutral-900 has-checked:text-white"
-                >
+                <label class="variant-opt cursor-pointer border border-line-strong px-4 py-2 text-sm font-medium transition-colors hover:border-fg-muted has-checked:border-accent has-checked:text-accent has-focus-visible:outline-2 has-focus-visible:outline-accent">
                   <input
                     type="radio"
                     name="variant"
@@ -191,132 +176,134 @@ const jsonLd = JSON.stringify({
                     data-stock={v.stock}
                     data-label={`${v.name}: ${v.value}`}
                   />
-                  {v.value} {v.stock <= 0 && '(sin stock)'}
+                  {v.value}
+                  {v.price_delta !== 0 && <span class="ml-1 font-mono text-xs text-fg-subtle">{v.price_delta > 0 ? '+' : '−'}{formatPrice(Math.abs(v.price_delta))}</span>}
+                  {v.stock <= 0 && <span class="ml-1 text-xs text-fg-subtle">(sin stock)</span>}
                 </label>
               ))}
             </div>
-          </div>
+          </fieldset>
         )}
 
-        <div class="mt-8 flex flex-wrap items-center gap-4">
+        <div class="mt-6 flex gap-2">
           <button
             id="add-to-cart-btn"
             type="button"
             data-add-to-cart={cartPayload}
-            disabled={product.stock <= 0 && variants.length === 0}
-            class="flex cursor-pointer items-center gap-2 rounded-full bg-neutral-900 px-8 py-3.5 font-semibold text-white transition-all hover:scale-[1.02] hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
+            disabled={soldOut}
+            class="btn btn-primary flex-1 py-3 text-base"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>
-            Agregar al carrito
+            {soldOut ? 'Sin stock por el momento' : 'Agregar al carrito'}
           </button>
-          <p id="stock-msg" class="text-sm font-medium text-emerald-600">
-            {product.stock > 0 || variants.length > 0
-              ? `✓ En stock${variants.length === 0 ? ` (${product.stock} ${product.stock === 1 ? 'unidad' : 'unidades'})` : ''}`
-              : ''}
-          </p>
-          {product.stock <= 0 && variants.length === 0 && (
-            <p class="rounded-full bg-neutral-100 px-6 py-3 font-semibold text-neutral-500">Sin stock por el momento</p>
-          )}
+          <button
+            type="button"
+            data-wishlist-toggle={product.id}
+            class:list={['wishlist-btn btn btn-secondary px-3', { 'is-wishlisted': wishlisted }]}
+            aria-label="Guardar en favoritos"
+            title="Favoritos"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5" aria-hidden="true"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+          </button>
+          <button
+            type="button"
+            data-compare-toggle={product.id}
+            aria-pressed="false"
+            class="btn btn-secondary px-3 aria-pressed:border-accent aria-pressed:text-accent"
+            aria-label="Agregar al comparador"
+            title="Comparar"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="size-5" aria-hidden="true"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg>
+          </button>
         </div>
+
+        <dl class="mt-6 divide-y divide-line border-y border-line text-sm">
+          <div class="flex justify-between gap-4 py-2.5"><dt class="text-fg-muted">Envío</dt><dd class="text-right">Gratis desde Gs. 3.000.000 · 24/48 h</dd></div>
+          <div class="flex justify-between gap-4 py-2.5"><dt class="text-fg-muted">Garantía</dt><dd class="text-right">Oficial de fábrica</dd></div>
+          <div class="flex justify-between gap-4 py-2.5"><dt class="text-fg-muted">Pedido</dt><dd class="text-right">Se confirma por WhatsApp</dd></div>
+        </dl>
       </div>
     </div>
 
-    <script is:inline define:vars={{ basePrice: product.price }}>
-      const fmt = new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', maximumFractionDigits: 0 });
-      const btn = document.getElementById('add-to-cart-btn');
-      const priceEl = document.getElementById('price-display');
-      const stockMsg = document.getElementById('stock-msg');
-
-      document.querySelectorAll('.thumb-btn').forEach((t) => {
-        t.addEventListener('click', () => {
-          document.getElementById('main-image').src = t.getAttribute('data-src');
-          document.querySelectorAll('.thumb-btn').forEach((x) => x.classList.remove('border-neutral-900'));
-          t.classList.add('border-neutral-900');
-        });
-      });
-
-      const radios = document.querySelectorAll('input[name="variant"]');
-      function syncVariant() {
-        const checked = document.querySelector('input[name="variant"]:checked');
-        if (!checked) return;
-        const delta = Number(checked.dataset.delta || 0);
-        const stock = Number(checked.dataset.stock || 0);
-        const label = checked.dataset.label || '';
-        const price = basePrice + delta;
-        priceEl.textContent = fmt.format(price);
-        const payload = JSON.parse(btn.getAttribute('data-add-to-cart'));
-        payload.price = price;
-        payload.variantId = Number(checked.value);
-        payload.variantLabel = label;
-        btn.setAttribute('data-add-to-cart', JSON.stringify(payload));
-        btn.disabled = stock <= 0;
-        stockMsg.textContent = stock > 0 ? `✓ En stock (${stock} ${stock === 1 ? 'unidad' : 'unidades'})` : 'Sin stock para esta opción';
-      }
-      radios.forEach((r) => r.addEventListener('change', syncVariant));
-      if (radios.length > 0) syncVariant();
-    </script>
-
-    <section class="mt-20 max-w-2xl">
-      <h2 class="text-2xl font-bold tracking-tight">Reseñas</h2>
-
-      {user && !myReview && (
-        <form method="POST" class="mt-6 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
-          <input type="hidden" name="_action" value="review" />
-          {reviewError && <p class="mb-4 rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">{reviewError}</p>}
-          <p class="text-sm font-semibold text-neutral-700">Tu calificación</p>
-          <div class="mt-2 flex gap-1 text-2xl text-amber-500">
-            {[1, 2, 3, 4, 5].map((n) => (
-              <label class="cursor-pointer">
-                <input type="radio" name="rating" value={n} class="peer sr-only" checked={n === 5} />
-                <span class="peer-checked:hidden">☆</span>
-                <span class="hidden peer-checked:inline">★</span>
-              </label>
-            ))}
+    <!-- Especificaciones -->
+    <section class="mt-16 grid gap-6 border-t border-line pt-10 lg:grid-cols-12" aria-labelledby="specs-title">
+      <h2 id="specs-title" class="font-display text-3xl font-extrabold uppercase lg:col-span-4">Especificaciones</h2>
+      <dl class="grid border-t border-line sm:grid-cols-2 lg:col-span-8">
+        {specs.map((s) => (
+          <div class="grid grid-cols-[8.5rem_1fr] gap-4 border-b border-line py-3 sm:odd:pr-6 sm:even:border-l sm:even:pl-6">
+            <dt class="eyebrow pt-0.5 text-fg-subtle">{s.label}</dt>
+            <dd class="text-sm font-medium">{s.value}</dd>
           </div>
-          <textarea
-            name="comment"
-            rows="3"
-            class="mt-3 w-full rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
-            placeholder="Contanos qué te pareció (opcional)"
-          ></textarea>
-          <button type="submit" class="mt-3 cursor-pointer rounded-xl bg-neutral-900 px-6 py-2.5 text-sm font-semibold text-white hover:bg-neutral-700">
-            Enviar reseña
-          </button>
-          <p class="mt-2 text-xs text-neutral-400">Tu reseña se publica luego de ser revisada por el equipo.</p>
-        </form>
-      )}
-      {myReview && (
-        <p class="mt-4 rounded-xl bg-neutral-100 px-4 py-3 text-sm text-neutral-600">
-          Ya enviaste una reseña para este producto{myReview.approved ? '' : ' (pendiente de aprobación)'}.
-        </p>
-      )}
-      {!user && (
-        <p class="mt-4 text-sm text-neutral-500">
-          <a href={`/login?next=/productos/${product.slug}`} class="font-semibold text-neutral-900 hover:underline">Iniciá sesión</a> para dejar tu reseña.
-        </p>
-      )}
+        ))}
+      </dl>
+    </section>
 
-      {reviews.length === 0 ? (
-        <p class="mt-8 text-sm text-neutral-500">Todavía no hay reseñas para este producto.</p>
-      ) : (
-        <ul class="mt-8 space-y-5">
-          {reviews.map((r) => (
-            <li class="border-b border-neutral-100 pb-5">
-              <div class="flex items-center gap-2">
-                <span class="text-amber-500">{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
-                <span class="text-sm font-semibold">{r.user_name}</span>
+    <!-- Reseñas -->
+    <section id="resenas" class="mt-16 grid scroll-mt-20 gap-6 border-t border-line pt-10 lg:grid-cols-12" aria-labelledby="reviews-title">
+      <div class="lg:col-span-4">
+        <h2 id="reviews-title" class="font-display text-3xl font-extrabold uppercase">Reseñas</h2>
+        {rating.count > 0 && (
+          <p class="mt-2 font-mono text-sm text-fg-muted">{rating.avg.toFixed(1)} / 5 · {rating.count} {rating.count === 1 ? 'reseña' : 'reseñas'}</p>
+        )}
+      </div>
+      <div class="lg:col-span-8">
+        {user && !myReview && (
+          <form method="POST" class="border border-line bg-surface p-5">
+            <input type="hidden" name="_action" value="review" />
+            {reviewError && <p class="mb-4 border border-danger/40 px-4 py-3 text-sm text-danger" role="alert">{reviewError}</p>}
+            <fieldset>
+              <legend class="text-sm font-semibold">Tu calificación</legend>
+              <div class="rating-input mt-2 flex gap-1 text-2xl text-warn">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <label class="cursor-pointer has-focus-visible:outline-2 has-focus-visible:outline-accent">
+                    <input type="radio" name="rating" value={n} class="sr-only" checked={n === 5} />
+                    <span class="sr-only">{n} {n === 1 ? 'estrella' : 'estrellas'}</span>
+                    <span class="star-off" aria-hidden="true">☆</span>
+                    <span class="star-on" aria-hidden="true">★</span>
+                  </label>
+                ))}
               </div>
-              {r.comment && <p class="mt-1.5 text-sm text-neutral-600">{r.comment}</p>}
-            </li>
-          ))}
-        </ul>
-      )}
+            </fieldset>
+            <label for="review-comment" class="sr-only">Comentario</label>
+            <textarea id="review-comment" name="comment" rows="3" class="field mt-3" placeholder="Contanos qué te pareció (opcional)"></textarea>
+            <div class="mt-3 flex flex-wrap items-center gap-3">
+              <button type="submit" class="btn btn-secondary">Enviar reseña</button>
+              <p class="text-xs text-fg-subtle">Se publica después de revisarla.</p>
+            </div>
+          </form>
+        )}
+        {myReview && (
+          <p class="border border-line px-4 py-3 text-sm text-fg-muted">
+            Ya enviaste una reseña para este producto{myReview.approved ? '' : ' (pendiente de aprobación)'}.
+          </p>
+        )}
+        {!user && (
+          <p class="text-sm text-fg-muted">
+            <a href={`/login?next=/productos/${product.slug}`} class="font-semibold text-fg underline-offset-2 hover:underline">Iniciá sesión</a> para dejar tu reseña.
+          </p>
+        )}
+
+        {reviews.length === 0 ? (
+          <p class="mt-6 text-sm text-fg-subtle">Todavía no hay reseñas para este producto.</p>
+        ) : (
+          <ul class="mt-6 divide-y divide-line border-y border-line">
+            {reviews.map((r) => (
+              <li class="py-4">
+                <div class="flex items-center gap-3">
+                  <span class="text-warn" aria-label={`${r.rating} de 5`}>{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
+                  <span class="text-sm font-semibold">{r.user_name}</span>
+                </div>
+                {r.comment && <p class="mt-1.5 text-sm text-fg-muted">{r.comment}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </section>
 
     {related.length > 0 && (
-      <section class="mt-20">
-        <h2 class="text-2xl font-bold tracking-tight" data-reveal>También te puede interesar</h2>
-        <div class="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4" data-reveal-group>
+      <section class="mt-16 border-t border-line pt-10" aria-labelledby="related-title">
+        <h2 id="related-title" class="font-display text-3xl font-extrabold uppercase">Otros equipos {product.category_name ? `de ${product.category_name}` : 'similares'}</h2>
+        <div class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {related.map((p) => (
             <ProductCard product={p} wishlisted={relatedWishlistedIds.has(p.id)} />
           ))}
@@ -324,4 +311,87 @@ const jsonLd = JSON.stringify({
       </section>
     )}
   </div>
+
+  <!-- CTA fija en móvil cuando el botón principal sale de pantalla -->
+  {!soldOut && (
+    <div id="sticky-cta" class="fixed inset-x-0 bottom-0 z-30 translate-y-full border-t border-line bg-surface transition-transform duration-200 lg:hidden" aria-hidden="true">
+      <div class="flex items-center gap-3 px-4 py-3">
+        <div class="min-w-0 flex-1">
+          <p class="truncate text-xs text-fg-muted">{product.name}</p>
+          <p id="sticky-price" class:list={['font-semibold', product.old_price && product.old_price > product.price ? 'text-accent' : '']}>{formatPrice(product.price)}</p>
+        </div>
+        <button id="sticky-add" type="button" class="btn btn-primary" tabindex="-1">Agregar al carrito</button>
+      </div>
+    </div>
+  )}
+
+  <script is:inline define:vars={{ basePrice: product.price }}>
+    const fmt = new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', maximumFractionDigits: 0 });
+    const btn = document.getElementById('add-to-cart-btn');
+    const priceEl = document.getElementById('price-display');
+    const stockMsg = document.getElementById('stock-msg');
+    const stickyPrice = document.getElementById('sticky-price');
+
+    document.querySelectorAll('.thumb-btn').forEach((t) => {
+      t.addEventListener('click', () => {
+        document.getElementById('main-image').src = t.getAttribute('data-src');
+        document.querySelectorAll('.thumb-btn').forEach((x) => {
+          x.classList.replace('border-accent', 'border-line');
+          x.setAttribute('aria-pressed', 'false');
+        });
+        t.classList.replace('border-line', 'border-accent');
+        t.setAttribute('aria-pressed', 'true');
+      });
+    });
+
+    function renderStock(stock) {
+      const color = stock <= 0 ? 'bg-fg-subtle' : stock <= 3 ? 'bg-warn' : 'bg-ok';
+      const label = stock <= 0 ? 'Sin stock para esta opción' : stock <= 3 ? 'Últimas unidades' : 'En stock';
+      const units = stock > 0 ? ` <span class="text-fg-muted">· ${stock} ${stock === 1 ? 'unidad' : 'unidades'}</span>` : '';
+      stockMsg.innerHTML = `<span class="size-2 ${color}" aria-hidden="true"></span>${label}${units}`;
+    }
+
+    const radios = document.querySelectorAll('input[name="variant"]');
+    function syncVariant() {
+      const checked = document.querySelector('input[name="variant"]:checked');
+      if (!checked) return;
+      const delta = Number(checked.dataset.delta || 0);
+      const stock = Number(checked.dataset.stock || 0);
+      const label = checked.dataset.label || '';
+      const price = basePrice + delta;
+      priceEl.textContent = fmt.format(price);
+      if (stickyPrice) stickyPrice.textContent = fmt.format(price);
+      const payload = JSON.parse(btn.getAttribute('data-add-to-cart'));
+      payload.price = price;
+      payload.variantId = Number(checked.value);
+      payload.variantLabel = label;
+      btn.setAttribute('data-add-to-cart', JSON.stringify(payload));
+      btn.disabled = stock <= 0;
+      btn.textContent = stock <= 0 ? 'Sin stock para esta opción' : 'Agregar al carrito';
+      renderStock(stock);
+    }
+    radios.forEach((r) => r.addEventListener('change', syncVariant));
+    if (radios.length > 0) syncVariant();
+
+    const sticky = document.getElementById('sticky-cta');
+    if (sticky) {
+      document.getElementById('sticky-add').addEventListener('click', () => btn.click());
+      // Scroll en lugar de IntersectionObserver: también cubre saltos (anclas como #resenas)
+      let ticking = false;
+      const update = () => {
+        ticking = false;
+        const show = btn.getBoundingClientRect().bottom < 0 && !btn.disabled;
+        sticky.classList.toggle('translate-y-full', !show);
+        sticky.setAttribute('aria-hidden', String(!show));
+        document.body.classList.toggle('has-sticky-cta', show);
+      };
+      window.addEventListener('scroll', () => {
+        if (!ticking) {
+          ticking = true;
+          requestAnimationFrame(update);
+        }
+      }, { passive: true });
+      update();
+    }
+  </script>
 </BaseLayout>

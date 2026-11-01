@@ -15,6 +15,7 @@ export interface ProductInput {
   ram: string;
   storage: string;
   screen: string;
+  gpu: string;
   stock: number;
   min_stock: number;
   featured: number;
@@ -62,6 +63,7 @@ export function parseProductForm(form: FormData): { data?: ProductInput; error?:
       ram: text('ram', 100),
       storage: text('storage', 100),
       screen: text('screen', 100),
+      gpu: text('gpu', 100),
       stock: Number.isFinite(stock) && stock > 0 ? Math.floor(stock) : 0,
       min_stock: Number.isFinite(minStock) && minStock > 0 ? Math.floor(minStock) : 0,
       featured: form.get('featured') ? 1 : 0,

@@ -1,0 +1,270 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getDb, SOLD_SQL, PAYMENT_METHODS, isPaymentMethod } from '../../lib/db';
+import { formatPrice } from '../../lib/util';
+import { localToday, formatLocal } from '../../lib/time';
+import { logAudit } from '../../lib/audit';
+
+const db = await getDb();
+const me = Astro.locals.user!;
+const today = localToday();
+
+const dateRaw = Astro.url.searchParams.get('fecha') ?? today;
+const date = /^\d{4}-\d{2}-\d{2}$/.test(dateRaw) && dateRaw <= today ? dateRaw : today;
+
+async function daySales(day: string) {
+  const res = await db.execute({
+    sql: `SELECT payment_method, COUNT(*) AS n, COALESCE(SUM(total), 0) AS total
+          FROM orders WHERE status IN ${SOLD_SQL} AND date(created_at, '-3 hours') = ?
+          GROUP BY payment_method`,
+    args: [day],
+  });
+  const by: Record<string, { n: number; total: number }> = {};
+  for (const r of res.rows) by[String(r.payment_method)] = { n: Number(r.n), total: Number(r.total) };
+  const get = (k: string) => by[k]?.total ?? 0;
+  const known = Object.keys(PAYMENT_METHODS);
+  const other = Object.entries(by).filter(([k]) => !known.includes(k) || k === 'qr').reduce((a, [, v]) => a + v.total, 0);
+  return {
+    by,
+    cash: get('efectivo'),
+    card: get('tarjeta'),
+    transfer: get('transferencia'),
+    other,
+    total: Object.values(by).reduce((a, v) => a + v.total, 0),
+    unknown: by['']?.n ?? 0,
+  };
+}
+
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const action = form.get('_action');
+
+  if (action === 'reopen' && me.is_admin) {
+    await db.execute({ sql: 'DELETE FROM cash_closings WHERE close_date = ?', args: [date] });
+    await logAudit(me.name, 'Reabrió la caja', 'caja', null, date);
+    return Astro.redirect(`/admin/caja?fecha=${date}`);
+  }
+
+  if (action === 'close') {
+    const opening = Number(form.get('opening_cash'));
+    const withdrawals = Number(form.get('withdrawals') || 0);
+    const counted = Number(form.get('counted_cash'));
+    const notes = String(form.get('notes') ?? '').trim().slice(0, 300);
+    if (![opening, withdrawals, counted].every((n) => Number.isFinite(n) && n >= 0)) {
+      error = 'Revisá los montos: deben ser números positivos.';
+    } else {
+      const s = await daySales(date);
+      const expected = opening + s.cash - withdrawals;
+      try {
+        await db.execute({
+          sql: `INSERT INTO cash_closings (close_date, opening_cash, cash_sales, withdrawals, expected_cash, counted_cash,
+                  difference, card_sales, transfer_sales, other_sales, total_sales, notes, user_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [date, opening, s.cash, withdrawals, expected, counted, counted - expected, s.card, s.transfer, s.other, s.total, notes, me.name],
+        });
+        await logAudit(me.name, 'Cerró la caja', 'caja', null, `${date} · contado ${formatPrice(counted)} · diferencia ${formatPrice(counted - expected)}`);
+        return Astro.redirect(`/admin/caja?fecha=${date}`);
+      } catch {
+        error = 'Esta fecha ya tiene un cierre registrado.';
+      }
+    }
+  }
+}
+
+const [closingRes, prevRes, historyRes, ordersRes] = await Promise.all([
+  db.execute({ sql: 'SELECT * FROM cash_closings WHERE close_date = ?', args: [date] }),
+  db.execute({ sql: 'SELECT counted_cash FROM cash_closings WHERE close_date < ? ORDER BY close_date DESC LIMIT 1', args: [date] }),
+  db.execute('SELECT * FROM cash_closings ORDER BY close_date DESC LIMIT 30'),
+  db.execute({
+    sql: `SELECT id, customer_name, total, payment_method, source, created_at FROM orders
+          WHERE status IN ${SOLD_SQL} AND date(created_at, '-3 hours') = ? ORDER BY created_at`,
+    args: [date],
+  }),
+]);
+const closing = closingRes.rows[0] as unknown as Record<string, number | string> | undefined;
+const suggestedOpening = Number(prevRes.rows[0]?.counted_cash ?? 0);
+const history = historyRes.rows as unknown as Record<string, number | string>[];
+const orders = ordersRes.rows as unknown as { id: number; customer_name: string; total: number; payment_method: string; source: string; created_at: string }[];
+const sales = await daySales(date);
+
+const dateLabel = new Intl.DateTimeFormat('es-PY', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
+const methodRows = [
+  ...Object.entries(PAYMENT_METHODS).map(([k, v]) => ({ label: v, ...(sales.by[k] ?? { n: 0, total: 0 }) })),
+  ...(sales.by[''] ? [{ label: 'Sin medio registrado', ...sales.by[''] }] : []),
+];
+const diffClass = (d: number) => (d === 0 ? 'text-emerald-700' : d > 0 ? 'text-sky-700' : 'text-rose-700');
+const input = 'w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-500';
+const label = 'mb-1.5 block text-sm font-medium text-neutral-700';
+const card = 'min-w-0 rounded-2xl border border-neutral-200 bg-white p-5';
+---
+
+<AdminLayout title="Caja diaria — NoteStore admin">
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">Caja diaria</h1>
+      <p class="mt-1 text-sm text-neutral-500">Ventas del día por medio de pago y cierre con arqueo de efectivo.</p>
+    </div>
+    <form method="GET" class="flex items-end gap-2">
+      <div>
+        <label for="fecha" class="mb-1 block text-xs font-medium text-neutral-500">Fecha</label>
+        <input id="fecha" name="fecha" type="date" value={date} max={today} class="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm" />
+      </div>
+      <button type="submit" class="cursor-pointer rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold hover:border-neutral-500">Ver</button>
+    </form>
+  </div>
+
+  <p class="mt-6 text-sm font-semibold text-neutral-700 first-letter:uppercase">{dateLabel}{date === today && ' · hoy'}</p>
+
+  <div class="mt-3 grid gap-4 lg:grid-cols-3">
+    <section class:list={[card, 'lg:col-span-2']} aria-labelledby="ventas-dia">
+      <div class="flex items-baseline justify-between gap-4">
+        <h2 id="ventas-dia" class="text-sm font-semibold">Ventas del día</h2>
+        <p class="text-2xl font-bold tabular-nums">{formatPrice(sales.total)}</p>
+      </div>
+      <ul class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {methodRows.map((m) => (
+          <li class="rounded-xl bg-neutral-50 p-3">
+            <p class="text-xs text-neutral-500">{m.label}</p>
+            <p class="mt-1 font-semibold tabular-nums">{formatPrice(m.total)}</p>
+            <p class="text-xs text-neutral-400">{m.n} {m.n === 1 ? 'venta' : 'ventas'}</p>
+          </li>
+        ))}
+      </ul>
+      {sales.unknown > 0 && (
+        <p class="mt-3 text-xs text-amber-700">
+          {sales.unknown} {sales.unknown === 1 ? 'venta no tiene' : 'ventas no tienen'} medio de pago registrado (pedidos anteriores a este cambio): no suman al efectivo esperado.
+        </p>
+      )}
+      {orders.length > 0 && (
+        <ul class="mt-4 divide-y divide-neutral-100 border-t border-neutral-100 text-sm">
+          {orders.map((o) => (
+            <li class="flex items-center gap-3 py-2">
+              <span class="w-12 text-xs text-neutral-400">#{o.id}</span>
+              <span class="min-w-0 flex-1 truncate">{o.customer_name}</span>
+              <span class="text-xs text-neutral-500">{formatLocal(o.created_at, { timeStyle: 'short' })}</span>
+              <span class="w-28 text-xs text-neutral-500">{isPaymentMethod(o.payment_method) ? PAYMENT_METHODS[o.payment_method] : '—'}</span>
+              <span class="shrink-0 text-right font-medium tabular-nums sm:w-28">{formatPrice(o.total)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+
+    <section class={card} aria-labelledby="cierre-title">
+      <h2 id="cierre-title" class="text-sm font-semibold">Cierre de caja</h2>
+      {closing ? (
+        <>
+          <dl class="mt-4 space-y-2 text-sm">
+            <div class="flex justify-between"><dt class="text-neutral-500">Fondo inicial</dt><dd class="tabular-nums">{formatPrice(Number(closing.opening_cash))}</dd></div>
+            <div class="flex justify-between"><dt class="text-neutral-500">+ Ventas en efectivo</dt><dd class="tabular-nums">{formatPrice(Number(closing.cash_sales))}</dd></div>
+            <div class="flex justify-between"><dt class="text-neutral-500">− Retiros / pagos</dt><dd class="tabular-nums">{formatPrice(Number(closing.withdrawals))}</dd></div>
+            <div class="flex justify-between border-t border-neutral-100 pt-2 font-medium"><dt>Esperado</dt><dd class="tabular-nums">{formatPrice(Number(closing.expected_cash))}</dd></div>
+            <div class="flex justify-between font-medium"><dt>Contado</dt><dd class="tabular-nums">{formatPrice(Number(closing.counted_cash))}</dd></div>
+            <div class:list={['flex justify-between text-base font-bold', diffClass(Number(closing.difference))]}>
+              <dt>Diferencia</dt><dd class="tabular-nums">{formatPrice(Number(closing.difference))}</dd>
+            </div>
+          </dl>
+          {closing.notes && <p class="mt-3 rounded-lg bg-neutral-50 p-3 text-sm text-neutral-600">{closing.notes}</p>}
+          <p class="mt-3 text-xs text-neutral-400">Cerrada por {closing.user_name} · {formatLocal(String(closing.created_at))}</p>
+          {me.is_admin && (
+            <form method="POST" class="mt-3" onsubmit="return confirm('¿Reabrir la caja de este día? Se borra el cierre.')">
+              <input type="hidden" name="_action" value="reopen" />
+              <button type="submit" class="cursor-pointer text-xs font-semibold text-rose-600 hover:underline">Reabrir caja</button>
+            </form>
+          )}
+        </>
+      ) : (
+        <form method="POST" class="mt-4 space-y-3" data-cash-form>
+          <input type="hidden" name="_action" value="close" />
+          {error && <p class="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700" role="alert">{error}</p>}
+          <div>
+            <label for="opening_cash" class={label}>Fondo inicial (Gs.)</label>
+            <input id="opening_cash" name="opening_cash" type="number" min="0" step="1" required value={suggestedOpening} class={input} data-cash="opening" />
+            {suggestedOpening > 0 && <p class="mt-1 text-xs text-neutral-400">Lo contado en el último cierre.</p>}
+          </div>
+          <div>
+            <label for="withdrawals" class={label}>Retiros o pagos en efectivo (Gs.)</label>
+            <input id="withdrawals" name="withdrawals" type="number" min="0" step="1" value="0" class={input} data-cash="withdrawals" />
+          </div>
+          <div class="rounded-xl bg-neutral-50 p-3 text-sm">
+            <div class="flex justify-between"><span class="text-neutral-500">Ventas en efectivo</span><span class="tabular-nums">{formatPrice(sales.cash)}</span></div>
+            <div class="mt-1 flex justify-between font-semibold"><span>Efectivo esperado</span><span class="tabular-nums" data-cash-expected>—</span></div>
+          </div>
+          <div>
+            <label for="counted_cash" class={label}>Efectivo contado (Gs.)</label>
+            <input id="counted_cash" name="counted_cash" type="number" min="0" step="1" required class={input} data-cash="counted" />
+            <p class="mt-1 text-sm font-semibold" data-cash-diff></p>
+          </div>
+          <div>
+            <label for="notes" class={label}>Observaciones</label>
+            <input id="notes" name="notes" class={input} placeholder="Opcional" />
+          </div>
+          <button type="submit" class="w-full cursor-pointer rounded-xl bg-neutral-900 py-2.5 text-sm font-semibold text-white hover:bg-neutral-700">Cerrar caja</button>
+        </form>
+      )}
+    </section>
+  </div>
+
+  <section class="mt-8" aria-labelledby="historial-title">
+    <h2 id="historial-title" class="text-xs font-semibold tracking-wide text-neutral-500 uppercase">Últimos cierres</h2>
+    <div class="mt-3 overflow-x-auto rounded-2xl border border-neutral-200 bg-white">
+      <table class="w-full min-w-160 text-sm">
+        <thead class="border-b border-neutral-200 bg-neutral-50 text-left text-xs text-neutral-500 uppercase">
+          <tr>
+            <th class="px-4 py-3 font-medium">Fecha</th>
+            <th class="px-4 py-3 text-right font-medium">Ventas</th>
+            <th class="px-4 py-3 text-right font-medium">Efectivo</th>
+            <th class="px-4 py-3 text-right font-medium">Tarjeta</th>
+            <th class="px-4 py-3 text-right font-medium">Transf.</th>
+            <th class="px-4 py-3 text-right font-medium">Diferencia</th>
+            <th class="px-4 py-3 font-medium">Cerró</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-neutral-100">
+          {history.length === 0 ? (
+            <tr><td colspan="7" class="p-8 text-center text-neutral-500">Todavía no hay cierres registrados.</td></tr>
+          ) : (
+            history.map((h) => (
+              <tr>
+                <td class="px-4 py-2.5"><a href={`/admin/caja?fecha=${h.close_date}`} class="font-medium hover:underline">{h.close_date}</a></td>
+                <td class="px-4 py-2.5 text-right tabular-nums">{formatPrice(Number(h.total_sales))}</td>
+                <td class="px-4 py-2.5 text-right tabular-nums">{formatPrice(Number(h.cash_sales))}</td>
+                <td class="px-4 py-2.5 text-right tabular-nums">{formatPrice(Number(h.card_sales))}</td>
+                <td class="px-4 py-2.5 text-right tabular-nums">{formatPrice(Number(h.transfer_sales))}</td>
+                <td class:list={['px-4 py-2.5 text-right font-semibold tabular-nums', diffClass(Number(h.difference))]}>{formatPrice(Number(h.difference))}</td>
+                <td class="px-4 py-2.5 text-neutral-500">{h.user_name}</td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <script is:inline define:vars={{ cashSales: sales.cash }}>
+    (() => {
+      const form = document.querySelector('[data-cash-form]');
+      if (!form) return;
+      const fmt = new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', maximumFractionDigits: 0 });
+      const val = (k) => Number(form.querySelector(`[data-cash="${k}"]`).value || 0);
+      const expectedEl = form.querySelector('[data-cash-expected]');
+      const diffEl = form.querySelector('[data-cash-diff]');
+      const update = () => {
+        const expected = val('opening') + cashSales - val('withdrawals');
+        expectedEl.textContent = fmt.format(expected);
+        const countedRaw = form.querySelector('[data-cash="counted"]').value;
+        if (countedRaw === '') {
+          diffEl.textContent = '';
+          return;
+        }
+        const diff = Number(countedRaw) - expected;
+        diffEl.textContent = diff === 0 ? 'Cuadra exacto' : `${diff > 0 ? 'Sobrante' : 'Faltante'}: ${fmt.format(Math.abs(diff))}`;
+        diffEl.className = `mt-1 text-sm font-semibold ${diff === 0 ? 'text-emerald-700' : diff > 0 ? 'text-sky-700' : 'text-rose-700'}`;
+      };
+      form.addEventListener('input', update);
+      update();
+    })();
+  </script>
+</AdminLayout>

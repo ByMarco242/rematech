@@ -27,7 +27,11 @@ async function nextInvoiceNumber(): Promise<number> {
 }
 
 /** pendiente → aprobado: descuenta stock, registra movimientos y asigna nº de factura */
-export async function approveOrder(orderId: number, user: SessionUser): Promise<boolean> {
+export async function approveOrder(
+  orderId: number,
+  user: SessionUser,
+  paymentMethod = ''
+): Promise<boolean> {
   const db = await getDb();
   const orderRes = await db.execute({
     sql: 'SELECT id, status FROM orders WHERE id = ?',
@@ -64,8 +68,10 @@ export async function approveOrder(orderId: number, user: SessionUser): Promise<
   }
   const invoice = await nextInvoiceNumber();
   await db.execute({
-    sql: "UPDATE orders SET status = 'aprobado', invoice_number = ?, seller_name = ? WHERE id = ?",
-    args: [invoice, user.name, orderId],
+    sql: `UPDATE orders SET status = 'aprobado', invoice_number = ?, seller_name = ?,
+            payment_method = CASE WHEN ? != '' THEN ? ELSE payment_method END
+          WHERE id = ?`,
+    args: [invoice, user.name, paymentMethod, paymentMethod, orderId],
   });
   await notifyOrderStatus(orderId, 'aprobado');
   await notifyAdminsLowStock(touchedIds);
@@ -162,6 +168,7 @@ export interface ManualSaleInput {
   customerName: string;
   customerPhone: string;
   customerRuc: string;
+  paymentMethod: string;
   items: { productId: number; qty: number }[];
 }
 
@@ -201,8 +208,8 @@ export async function createManualSale(
   const orderRes = await db.execute({
     sql: `INSERT INTO orders
             (user_id, customer_name, customer_email, customer_phone, customer_ruc,
-             status, source, seller_name, invoice_number, total)
-          VALUES (NULL, ?, '', ?, ?, 'aprobado', 'manual', ?, ?, ?)`,
+             status, source, seller_name, invoice_number, total, payment_method)
+          VALUES (NULL, ?, '', ?, ?, 'aprobado', 'manual', ?, ?, ?, ?)`,
     args: [
       input.customerName || 'Consumidor final',
       input.customerPhone,
@@ -210,6 +217,7 @@ export async function createManualSale(
       user.name,
       invoice,
       total,
+      input.paymentMethod,
     ],
   });
   const orderId = Number(orderRes.lastInsertRowid);

@@ -2,6 +2,7 @@
 import AdminLayout from '../../../layouts/AdminLayout.astro';
 import { getDb, type Product } from '../../../lib/db';
 import { formatPrice } from '../../../lib/util';
+import { logAudit } from '../../../lib/audit';
 
 const db = await getDb();
 
@@ -12,7 +13,9 @@ if (Astro.request.method === 'POST') {
   if (form.get('_action') === 'delete' && isAdmin) {
     const id = Number(form.get('id'));
     if (Number.isInteger(id)) {
+      const gone = (await db.execute({ sql: 'SELECT name FROM products WHERE id = ?', args: [id] })).rows[0];
       await db.execute({ sql: 'DELETE FROM products WHERE id = ?', args: [id] });
+      if (gone) await logAudit(Astro.locals.user!.name, 'Eliminó producto', 'producto', id, String(gone.name));
     }
     return Astro.redirect('/admin/productos');
   }
@@ -38,12 +41,19 @@ const products = res.rows as unknown as Product[];
       <h1 class="text-2xl font-bold tracking-tight">Productos</h1>
       <p class="mt-1 text-sm text-neutral-500">{products.length} productos en el catálogo.</p>
     </div>
-    <a
-      href="/admin/productos/nuevo"
-      class="rounded-full bg-neutral-900 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-neutral-700"
-    >
-      + Nuevo producto
-    </a>
+    <div class="flex flex-wrap gap-2">
+      {isAdmin && (
+        <a href="/admin/productos/masivo" class="rounded-full border border-neutral-300 bg-white px-5 py-2.5 text-sm font-semibold transition-colors hover:border-neutral-500">
+          Precios masivos / CSV
+        </a>
+      )}
+      <a
+        href="/admin/productos/nuevo"
+        class="rounded-full bg-neutral-900 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-neutral-700"
+      >
+        + Nuevo producto
+      </a>
+    </div>
   </div>
 
   <form method="GET" class="mt-6 flex max-w-md gap-2">

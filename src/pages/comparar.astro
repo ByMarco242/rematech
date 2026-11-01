@@ -1,0 +1,208 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Price from '../components/Price.astro';
+import { getDb, type Product } from '../lib/db';
+import { formatPrice } from '../lib/util';
+import { cpuFamily, ramGb, storageGb, screenInches, stockLevel, stockLabel } from '../lib/specs';
+
+const ids = (Astro.url.searchParams.get('ids') ?? '')
+  .split(',')
+  .map(Number)
+  .filter((n) => Number.isInteger(n) && n > 0)
+  .slice(0, 4);
+
+let products: Product[] = [];
+if (ids.length > 0) {
+  const db = await getDb();
+  const res = await db.execute({
+    sql: `SELECT p.*, c.name AS category_name, c.slug AS category_slug
+          FROM products p LEFT JOIN categories c ON c.id = p.category_id
+          WHERE p.id IN (${ids.map(() => '?').join(',')})`,
+    args: ids,
+  });
+  const byId = new Map((res.rows as unknown as Product[]).map((p) => [p.id, p]));
+  products = ids.map((id) => byId.get(id)).filter((p): p is Product => Boolean(p));
+}
+
+type Row = {
+  label: string;
+  values: string[];
+  /** valor numérico por columna para marcar el mejor; null si no se puede comparar */
+  scores?: (number | null)[];
+  better?: 'low' | 'high';
+};
+
+const rows: Row[] = [
+  {
+    label: 'Precio',
+    values: products.map((p) => formatPrice(p.price)),
+    scores: products.map((p) => p.price),
+    better: 'low',
+  },
+  { label: 'Disponibilidad', values: products.map((p) => stockLabel[stockLevel(p.stock, p.min_stock)]) },
+  { label: 'Procesador', values: products.map((p) => p.cpu || '—') },
+  { label: 'Familia de CPU', values: products.map((p) => cpuFamily(p.cpu) ?? '—') },
+  { label: 'Placa de video', values: products.map((p) => p.gpu || '—') },
+  {
+    label: 'Memoria RAM',
+    values: products.map((p) => p.ram || '—'),
+    scores: products.map((p) => ramGb(p.ram)),
+    better: 'high',
+  },
+  {
+    label: 'Almacenamiento',
+    values: products.map((p) => p.storage || '—'),
+    scores: products.map((p) => storageGb(p.storage)),
+    better: 'high',
+  },
+  {
+    label: 'Pantalla',
+    values: products.map((p) => p.screen || '—'),
+  },
+  {
+    label: 'Tamaño',
+    values: products.map((p) => {
+      const inches = screenInches(p.screen);
+      return inches ? `${inches}"` : '—';
+    }),
+  },
+  { label: 'Marca', values: products.map((p) => p.brand || '—') },
+  { label: 'Uso', values: products.map((p) => p.category_name ?? '—') },
+];
+
+function bestIndexes(row: Row): Set<number> {
+  if (!row.scores || !row.better) return new Set();
+  const valid = row.scores.filter((s): s is number => s != null);
+  if (valid.length < 2) return new Set();
+  const target = row.better === 'low' ? Math.min(...valid) : Math.max(...valid);
+  if (valid.every((v) => v === target)) return new Set();
+  return new Set(row.scores.flatMap((s, i) => (s === target ? [i] : [])));
+}
+
+const isDifferent = (row: Row) => new Set(row.values).size > 1;
+const colWidth = 'min-w-[11rem] w-[calc((100%-10rem)/var(--cols))]';
+---
+
+<BaseLayout title="Comparar notebooks — NoteStore" description="Compará notebooks lado a lado: precio, procesador, memoria, almacenamiento y pantalla.">
+  <div class="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+    <nav aria-label="Ruta" class="text-xs text-fg-subtle">
+      <a href="/" class="hover:text-fg">Inicio</a> / <span class="text-fg-muted">Comparar</span>
+    </nav>
+    <div class="mt-3 flex flex-wrap items-end justify-between gap-4 border-b border-line pb-5">
+      <div>
+        <h1 class="font-display text-4xl font-extrabold uppercase sm:text-5xl">Comparar</h1>
+        <p class="mt-1 text-sm text-fg-muted">Hasta 4 equipos lado a lado. Marcamos en naranja el mejor valor de cada fila.</p>
+      </div>
+      {products.length >= 2 && (
+        <label class="flex cursor-pointer items-center gap-2 text-sm text-fg-muted">
+          <input type="checkbox" id="only-diff" /> Solo diferencias
+        </label>
+      )}
+    </div>
+
+    {products.length < 2 ? (
+      <div class="mt-8 border border-dashed border-line-strong p-10 text-center" id="compare-empty">
+        <p class="font-semibold">
+          {products.length === 0 ? 'Todavía no elegiste equipos para comparar' : 'Elegí al menos un equipo más'}
+        </p>
+        <p class="mt-1 text-sm text-fg-muted">
+          En el catálogo tocá <span class="text-fg">Comparar</span> en cada notebook que te interese.
+        </p>
+        <a href="/productos" class="btn btn-primary mt-5">Ir al catálogo</a>
+      </div>
+    ) : (
+      <div class="mt-6 overflow-x-auto border border-line" style={`--cols: ${products.length}`}>
+        <table class="w-full border-collapse text-sm">
+          <caption class="sr-only">Comparación de {products.length} notebooks</caption>
+          <thead>
+            <tr class="align-top">
+              <th scope="col" class="sticky left-0 z-10 w-40 min-w-32 border-r border-b border-line bg-bg p-4 text-left">
+                <span class="eyebrow text-fg-subtle">{products.length} equipos</span>
+              </th>
+              {products.map((p) => (
+                <th scope="col" class:list={['border-b border-line p-4 text-left font-normal not-last:border-r', colWidth]}>
+                  <div class="flex items-start justify-between gap-2">
+                    <span class="eyebrow text-fg-subtle">{p.brand}</span>
+                    <button type="button" class="-mt-1 -mr-1 cursor-pointer p-1 text-fg-subtle hover:text-fg" data-compare-remove={p.id} aria-label={`Quitar ${p.name} de la comparación`}>
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-4" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+                    </button>
+                  </div>
+                  <a href={`/productos/${p.slug}`} class="mt-2 block bg-surface">
+                    <img src={p.image_url} alt="" width="400" height="300" class="aspect-[4/3] w-full object-cover" />
+                  </a>
+                  <a href={`/productos/${p.slug}`} class="mt-3 block leading-snug font-semibold hover:text-accent">{p.name}</a>
+                  <div class="mt-2"><Price price={p.price} oldPrice={p.old_price} size="sm" /></div>
+                  <button
+                    type="button"
+                    class="btn btn-secondary mt-3 w-full py-2"
+                    disabled={p.stock <= 0}
+                    data-add-to-cart={JSON.stringify({ id: p.id, name: p.name, price: p.price, image: p.image_url, slug: p.slug })}
+                  >
+                    {p.stock <= 0 ? 'Sin stock' : 'Agregar al carrito'}
+                  </button>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const best = bestIndexes(row);
+              const diff = isDifferent(row);
+              return (
+                <tr data-same={diff ? undefined : ''} class="hover:bg-surface">
+                  <th scope="row" class="sticky left-0 z-10 border-r border-b border-line bg-bg p-4 text-left font-normal">
+                    <span class="eyebrow text-fg-muted">{row.label}</span>
+                    {diff && <span class="mt-1 block font-mono text-[10px] text-fg-subtle">difiere</span>}
+                  </th>
+                  {row.values.map((v, i) => (
+                    <td class:list={[
+                      'relative border-b border-line p-4 not-last:border-r',
+                      best.has(i) ? 'font-medium text-accent' : diff ? 'text-fg' : 'text-fg-muted',
+                    ]}>
+                      {best.has(i) && <span class="absolute inset-y-0 left-0 w-0.5 bg-accent" aria-hidden="true"></span>}
+                      {v}
+                      {best.has(i) && <span class="sr-only"> (mejor valor)</span>}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    )}
+
+    {products.length >= 2 && products.length < 4 && (
+      <p class="mt-4 text-sm text-fg-muted">
+        Podés sumar {4 - products.length} más desde el <a href="/productos" class="text-fg underline-offset-2 hover:underline">catálogo</a>.
+      </p>
+    )}
+  </div>
+
+  <script is:inline define:vars={{ shownIds: ids }}>
+    (() => {
+      const store = window.NoteStoreCompare;
+      // Sin ids en la URL: usar los guardados en este navegador
+      if (shownIds.length === 0) {
+        const saved = store.get();
+        if (saved.length > 0) location.replace(`/comparar?ids=${saved.join(',')}`);
+        return;
+      }
+      // La URL manda: así se puede compartir una comparación
+      store.save(shownIds);
+
+      document.querySelectorAll('[data-compare-remove]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const next = store.get().filter((id) => id !== Number(btn.dataset.compareRemove));
+          store.save(next);
+          location.replace(next.length ? `/comparar?ids=${next.join(',')}` : '/comparar');
+        });
+      });
+
+      const onlyDiff = document.getElementById('only-diff');
+      onlyDiff?.addEventListener('change', () => {
+        document.querySelectorAll('tr[data-same]').forEach((tr) => (tr.hidden = onlyDiff.checked));
+      });
+    })();
+  </script>
+</BaseLayout>

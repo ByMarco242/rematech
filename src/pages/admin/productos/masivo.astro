@@ -1,0 +1,232 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import { getDb, type Category } from '../../../lib/db';
+import { formatPrice } from '../../../lib/util';
+import { parseCsv } from '../../../lib/csv';
+import { logAudit } from '../../../lib/audit';
+import { recordStockMove } from '../../../lib/orders';
+
+const db = await getDb();
+const me = Astro.locals.user!;
+
+const params = Astro.url.searchParams;
+const scope = params.get('alcance') ?? 'todos';
+const scopeValue = params.get('valor') ?? '';
+const pct = Math.max(Math.min(Number(params.get('pct')) || 0, 200), -90);
+const roundTo = [0, 1000, 10000, 50000].includes(Number(params.get('redondeo'))) ? Number(params.get('redondeo')) : 10000;
+const keepOld = params.get('tachado') === '1';
+
+function scopeWhere(): { sql: string; args: (string | number)[] } {
+  if (scope === 'categoria' && scopeValue) return { sql: 'WHERE category_id = ?', args: [Number(scopeValue)] };
+  if (scope === 'marca' && scopeValue) return { sql: 'WHERE brand = ?', args: [scopeValue] };
+  return { sql: '', args: [] };
+}
+const newPrice = (price: number) => {
+  const raw = price * (1 + pct / 100);
+  return roundTo ? Math.max(Math.round(raw / roundTo) * roundTo, roundTo) : Math.round(raw);
+};
+
+let result: { ok: number; errors: string[] } | null = null;
+let applied = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const action = form.get('_action');
+
+  if (action === 'apply_prices' && pct !== 0) {
+    const w = scopeWhere();
+    const rows = (await db.execute({ sql: `SELECT id, name, price FROM products ${w.sql}`, args: w.args })).rows;
+    for (const r of rows) {
+      const price = Number(r.price);
+      await db.execute({
+        sql: `UPDATE products SET price = ?${keepOld ? ', old_price = CASE WHEN ? < price THEN price ELSE NULL END' : ''} WHERE id = ?`,
+        args: keepOld ? [newPrice(price), newPrice(price), Number(r.id)] : [newPrice(price), Number(r.id)],
+      });
+    }
+    await logAudit(me.name, `Ajustó precios ${pct > 0 ? '+' : ''}${pct}% en ${rows.length} productos`, 'precios', null,
+      `Alcance: ${scope}${scopeValue ? ` (${scopeValue})` : ''} · redondeo ${roundTo || 'ninguno'}${keepOld ? ' · precio anterior tachado' : ''}`);
+    applied = `Se actualizaron ${rows.length} precios.`;
+  }
+
+  if (action === 'import') {
+    const file = form.get('file');
+    result = { ok: 0, errors: [] };
+    if (!(file instanceof File) || file.size === 0) {
+      result.errors.push('Elegí un archivo CSV.');
+    } else if (file.size > 2_000_000) {
+      result.errors.push('El archivo supera los 2 MB.');
+    } else {
+      const rows = parseCsv(await file.text());
+      const num = (v: string | undefined) => {
+        if (v === undefined || v === '') return undefined;
+        const n = Number(v.replace(/\./g, '').replace(',', '.'));
+        return Number.isFinite(n) && n >= 0 ? n : NaN;
+      };
+      for (const [i, row] of rows.entries()) {
+        const line = i + 2;
+        const id = Number(row.id);
+        if (!Number.isInteger(id) || id <= 0) {
+          result.errors.push(`Fila ${line}: falta un id válido.`);
+          continue;
+        }
+        const current = (await db.execute({ sql: 'SELECT id, name, stock FROM products WHERE id = ?', args: [id] })).rows[0];
+        if (!current) {
+          result.errors.push(`Fila ${line}: no existe el producto con id ${id}.`);
+          continue;
+        }
+        const fields: [string, number | null | undefined][] = [
+          ['price', num(row.precio)],
+          ['old_price', row.precio_anterior === '' ? null : num(row.precio_anterior)],
+          ['cost', num(row.costo)],
+          ['stock', num(row.stock)],
+          ['min_stock', num(row.stock_minimo)],
+        ];
+        if (fields.some(([, v]) => Number.isNaN(v))) {
+          result.errors.push(`Fila ${line}: hay un número inválido.`);
+          continue;
+        }
+        const set = fields.filter(([k, v]) => v !== undefined && (k !== 'old_price' || 'precio_anterior' in row));
+        if (set.length === 0) continue;
+        await db.execute({
+          sql: `UPDATE products SET ${set.map(([k]) => `${k} = ?`).join(', ')} WHERE id = ?`,
+          args: [...set.map(([k, v]) => (k === 'stock' || k === 'min_stock' ? Math.floor(v as number) : v ?? null)), id],
+        });
+        const newStock = set.find(([k]) => k === 'stock')?.[1];
+        if (newStock !== undefined && newStock !== null && Math.floor(newStock) !== Number(current.stock)) {
+          await recordStockMove(id, String(current.name), Math.floor(newStock) - Number(current.stock), 'Ajuste por importación CSV', me.name);
+        }
+        result.ok++;
+      }
+      await logAudit(me.name, `Importó CSV de productos: ${result.ok} actualizados`, 'precios', null,
+        result.errors.length ? `${result.errors.length} filas con error` : file.name);
+    }
+  }
+}
+
+const [categoriesRes, brandsRes] = await Promise.all([
+  db.execute('SELECT * FROM categories ORDER BY name'),
+  db.execute("SELECT DISTINCT brand FROM products WHERE brand != '' ORDER BY brand"),
+]);
+const categories = categoriesRes.rows as unknown as Category[];
+const brands = brandsRes.rows.map((r) => String(r.brand));
+
+let preview: { id: number; name: string; price: number; next: number }[] = [];
+if (pct !== 0 && !applied) {
+  const w = scopeWhere();
+  preview = (await db.execute({ sql: `SELECT id, name, price FROM products ${w.sql} ORDER BY name`, args: w.args })).rows.map((r) => ({
+    id: Number(r.id),
+    name: String(r.name),
+    price: Number(r.price),
+    next: newPrice(Number(r.price)),
+  }));
+}
+
+const input = 'w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-500';
+const label = 'mb-1.5 block text-sm font-medium text-neutral-700';
+const card = 'rounded-2xl border border-neutral-200 bg-white p-6';
+---
+
+<AdminLayout title="Acciones masivas — NoteStore admin">
+  <nav class="text-sm text-neutral-500"><a href="/admin/productos" class="hover:text-neutral-900">← Volver a productos</a></nav>
+  <h1 class="mt-3 text-2xl font-bold tracking-tight">Acciones masivas</h1>
+  <p class="mt-1 text-sm text-neutral-500">Cambiá precios de muchos productos a la vez o actualizalos desde una planilla.</p>
+
+  {applied && <p class="mt-6 rounded-xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700" role="status">{applied}</p>}
+
+  <div class="mt-8 grid gap-6 lg:grid-cols-2">
+    <section class={card} aria-labelledby="precios-title">
+      <h2 id="precios-title" class="font-bold">Ajuste de precios por porcentaje</h2>
+      <form method="GET" class="mt-4 grid gap-4 sm:grid-cols-2">
+        <div>
+          <label for="alcance" class={label}>Aplicar a</label>
+          <select id="alcance" name="alcance" class={input}>
+            <option value="todos" selected={scope === 'todos'}>Todos los productos</option>
+            <option value="categoria" selected={scope === 'categoria'}>Una categoría</option>
+            <option value="marca" selected={scope === 'marca'}>Una marca</option>
+          </select>
+        </div>
+        <div>
+          <label for="valor" class={label}>Categoría o marca</label>
+          <select id="valor" name="valor" class={input}>
+            <option value="">—</option>
+            <optgroup label="Categorías">
+              {categories.map((c) => <option value={c.id} selected={scope === 'categoria' && scopeValue === String(c.id)}>{c.name}</option>)}
+            </optgroup>
+            <optgroup label="Marcas">
+              {brands.map((b) => <option value={b} selected={scope === 'marca' && scopeValue === b}>{b}</option>)}
+            </optgroup>
+          </select>
+        </div>
+        <div>
+          <label for="pct" class={label}>Variación (%)</label>
+          <input id="pct" name="pct" type="number" step="0.5" min="-90" max="200" value={pct || ''} required placeholder="Ej: 5 o -10" class={input} />
+        </div>
+        <div>
+          <label for="redondeo" class={label}>Redondear a</label>
+          <select id="redondeo" name="redondeo" class={input}>
+            <option value="0" selected={roundTo === 0}>Sin redondeo</option>
+            <option value="1000" selected={roundTo === 1000}>Gs. 1.000</option>
+            <option value="10000" selected={roundTo === 10000}>Gs. 10.000</option>
+            <option value="50000" selected={roundTo === 50000}>Gs. 50.000</option>
+          </select>
+        </div>
+        <label class="flex items-center gap-2 text-sm text-neutral-600 sm:col-span-2">
+          <input type="checkbox" name="tachado" value="1" checked={keepOld} class="accent-neutral-900" />
+          Si baja el precio, mostrar el actual tachado (oferta)
+        </label>
+        <button type="submit" class="cursor-pointer rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold hover:border-neutral-500 sm:col-span-2">
+          Ver cómo quedan los precios
+        </button>
+      </form>
+
+      {preview.length > 0 && (
+        <div class="mt-6 border-t border-neutral-100 pt-4">
+          <p class="text-sm font-semibold">{preview.length} productos · {pct > 0 ? '+' : ''}{pct}%</p>
+          <ul class="mt-2 max-h-64 divide-y divide-neutral-100 overflow-y-auto text-sm">
+            {preview.map((p) => (
+              <li class="flex items-center justify-between gap-3 py-1.5">
+                <span class="min-w-0 truncate">{p.name}</span>
+                <span class="whitespace-nowrap text-neutral-400 line-through">{formatPrice(p.price)}</span>
+                <span class="w-28 text-right font-semibold whitespace-nowrap">{formatPrice(p.next)}</span>
+              </li>
+            ))}
+          </ul>
+          <form method="POST" class="mt-4" onsubmit="return confirm('¿Aplicar los nuevos precios? Queda registrado en la auditoría.')">
+            <input type="hidden" name="_action" value="apply_prices" />
+            <button type="submit" class="w-full cursor-pointer rounded-xl bg-neutral-900 py-2.5 text-sm font-semibold text-white hover:bg-neutral-700">
+              Aplicar a {preview.length} productos
+            </button>
+          </form>
+        </div>
+      )}
+    </section>
+
+    <section class={card} aria-labelledby="csv-title">
+      <h2 id="csv-title" class="font-bold">Actualizar desde planilla (CSV)</h2>
+      <ol class="mt-3 list-decimal space-y-1 pl-5 text-sm text-neutral-600">
+        <li><a href="/admin/productos.csv" class="font-semibold text-neutral-900 underline">Descargá la planilla actual</a> y abrila en Excel o Google Sheets.</li>
+        <li>Modificá <b>precio</b>, <b>precio_anterior</b>, <b>costo</b>, <b>stock</b> o <b>stock_minimo</b>. No cambies la columna <b>id</b>.</li>
+        <li>Guardala como CSV y subila acá. Las columnas que borres no se tocan.</li>
+      </ol>
+      <form method="POST" enctype="multipart/form-data" class="mt-4 space-y-3">
+        <input type="hidden" name="_action" value="import" />
+        <label for="file" class="sr-only">Archivo CSV</label>
+        <input id="file" name="file" type="file" accept=".csv,text/csv" required class="block w-full text-sm file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-neutral-900 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white" />
+        <button type="submit" class="w-full cursor-pointer rounded-xl bg-neutral-900 py-2.5 text-sm font-semibold text-white hover:bg-neutral-700">Importar</button>
+      </form>
+      {result && (
+        <div class="mt-4 text-sm" role="status">
+          <p class:list={['rounded-xl px-4 py-3 font-medium', result.errors.length ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700']}>
+            {result.ok} productos actualizados{result.errors.length > 0 && <>, {result.errors.length} filas con error</>}.
+          </p>
+          {result.errors.length > 0 && (
+            <ul class="mt-2 max-h-40 list-disc overflow-y-auto pl-5 text-neutral-600">
+              {result.errors.map((e) => <li>{e}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+      <p class="mt-4 text-xs text-neutral-400">Los cambios de stock quedan como movimientos en Inventario y todo se registra en Auditoría.</p>
+    </section>
+  </div>
+</AdminLayout>

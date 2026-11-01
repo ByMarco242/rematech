@@ -1,0 +1,302 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { getDb } from '../../lib/db';
+import { formatPrice } from '../../lib/util';
+import { localToday } from '../../lib/time';
+import { recordStockMove } from '../../lib/orders';
+import { logAudit } from '../../lib/audit';
+
+const db = await getDb();
+const me = Astro.locals.user!;
+const today = localToday();
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const action = form.get('_action');
+
+  if (action === 'void') {
+    const id = Number(form.get('id'));
+    const purchase = (await db.execute({ sql: 'SELECT id, supplier FROM purchases WHERE id = ?', args: [id] })).rows[0];
+    if (purchase) {
+      const items = (await db.execute({ sql: 'SELECT product_id, product_name, qty FROM purchase_items WHERE purchase_id = ?', args: [id] })).rows;
+      for (const it of items) {
+        if (it.product_id === null) continue;
+        await db.execute({ sql: 'UPDATE products SET stock = MAX(stock - ?, 0) WHERE id = ?', args: [Number(it.qty), Number(it.product_id)] });
+        await recordStockMove(Number(it.product_id), String(it.product_name), -Number(it.qty), `Anulación compra #${id}`, me.name);
+      }
+      await db.execute({ sql: 'DELETE FROM purchases WHERE id = ?', args: [id] });
+      await logAudit(me.name, 'Anuló compra', 'compra', id, `${purchase.supplier} · el costo de los productos no se revierte`);
+    }
+    return Astro.redirect('/admin/compras');
+  }
+
+  if (action === 'create') {
+    const supplier = String(form.get('supplier') ?? '').trim().slice(0, 100);
+    const date = String(form.get('purchase_date') ?? '');
+    const invoice = String(form.get('invoice_number') ?? '').trim().slice(0, 40);
+    const withInvoice = form.get('with_invoice') ? 1 : 0;
+    const notes = String(form.get('notes') ?? '').trim().slice(0, 300);
+    let items: { id: number; qty: number; cost: number }[] = [];
+    try {
+      const parsed = JSON.parse(String(form.get('items') ?? '[]'));
+      if (Array.isArray(parsed)) items = parsed.map((i) => ({ id: Number(i.id), qty: Math.floor(Number(i.qty)), cost: Number(i.cost) }));
+    } catch {
+      items = [];
+    }
+    items = items.filter((i) => Number.isInteger(i.id) && i.qty > 0 && i.qty <= 10000 && Number.isFinite(i.cost) && i.cost >= 0).slice(0, 100);
+
+    if (!supplier) error = 'Indicá el proveedor.';
+    else if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > today) error = 'La fecha no es válida.';
+    else if (items.length === 0) error = 'Agregá al menos un producto con cantidad y costo.';
+    else {
+      const total = items.reduce((a, i) => a + i.qty * i.cost, 0);
+      const res = await db.execute({
+        sql: `INSERT INTO purchases (purchase_date, supplier, invoice_number, with_invoice, total, notes, user_name)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        args: [date, supplier, invoice, withInvoice, total, notes, me.name],
+      });
+      const purchaseId = Number(res.lastInsertRowid);
+      for (const it of items) {
+        const p = (await db.execute({ sql: 'SELECT id, name, stock, cost FROM products WHERE id = ?', args: [it.id] })).rows[0];
+        if (!p) continue;
+        const stock = Math.max(Number(p.stock), 0);
+        const cost = Number(p.cost);
+        // Costo promedio ponderado entre lo que había en stock y lo que entra
+        const newCost = stock > 0 && cost > 0 ? Math.round((stock * cost + it.qty * it.cost) / (stock + it.qty)) : it.cost;
+        await db.execute({
+          sql: 'INSERT INTO purchase_items (purchase_id, product_id, product_name, qty, unit_cost) VALUES (?, ?, ?, ?, ?)',
+          args: [purchaseId, it.id, String(p.name), it.qty, it.cost],
+        });
+        await db.execute({ sql: 'UPDATE products SET stock = stock + ?, cost = ? WHERE id = ?', args: [it.qty, newCost, it.id] });
+        await recordStockMove(it.id, String(p.name), it.qty, `Compra #${purchaseId} — ${supplier}`, me.name, invoice ? `Factura ${invoice}` : '');
+      }
+      await logAudit(me.name, 'Registró compra', 'compra', purchaseId, `${supplier} · ${items.length} productos · ${formatPrice(total)}`);
+      return Astro.redirect('/admin/compras');
+    }
+  }
+}
+
+const [productsRes, purchasesRes, itemsRes, statsRes, suppliersRes] = await Promise.all([
+  db.execute('SELECT id, name, cost, stock FROM products ORDER BY name'),
+  db.execute('SELECT * FROM purchases ORDER BY purchase_date DESC, id DESC LIMIT 30'),
+  db.execute(`SELECT * FROM purchase_items WHERE purchase_id IN (SELECT id FROM purchases ORDER BY purchase_date DESC, id DESC LIMIT 30)`),
+  db.execute(
+    `SELECT COALESCE(SUM(CASE WHEN purchase_date >= date('now', '-3 hours', 'start of month') THEN total END), 0) AS month,
+            COALESCE(SUM(CASE WHEN purchase_date >= date('now', '-3 hours', '-90 days') THEN total END), 0) AS last90,
+            COUNT(*) AS n
+     FROM purchases`
+  ),
+  db.execute(
+    `SELECT supplier, COUNT(*) AS n, SUM(total) AS total, MAX(purchase_date) AS last
+     FROM purchases GROUP BY supplier ORDER BY total DESC LIMIT 8`
+  ),
+]);
+const products = productsRes.rows.map((r) => ({ id: Number(r.id), name: String(r.name), cost: Number(r.cost), stock: Number(r.stock) }));
+const purchases = purchasesRes.rows as unknown as { id: number; purchase_date: string; supplier: string; invoice_number: string; with_invoice: number; total: number; notes: string; user_name: string }[];
+const itemsByPurchase = new Map<number, { product_name: string; qty: number; unit_cost: number }[]>();
+for (const r of itemsRes.rows) {
+  const list = itemsByPurchase.get(Number(r.purchase_id)) ?? [];
+  list.push({ product_name: String(r.product_name), qty: Number(r.qty), unit_cost: Number(r.unit_cost) });
+  itemsByPurchase.set(Number(r.purchase_id), list);
+}
+const stats = statsRes.rows[0];
+const suppliers = suppliersRes.rows.map((r) => ({ name: String(r.supplier), n: Number(r.n), total: Number(r.total), last: String(r.last) }));
+
+const input = 'w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-500';
+const label = 'mb-1.5 block text-sm font-medium text-neutral-700';
+const card = 'min-w-0 rounded-2xl border border-neutral-200 bg-white p-5';
+---
+
+<AdminLayout title="Compras — NoteStore admin">
+  <h1 class="text-2xl font-bold tracking-tight">Compras de mercadería</h1>
+  <p class="mt-1 text-sm text-neutral-500">
+    Al registrar una compra sube el stock y se recalcula el costo de cada producto (promedio ponderado),
+    así la ganancia en Métricas y Finanzas usa costos reales.
+  </p>
+
+  <div class="mt-6 grid grid-cols-3 gap-3 lg:max-w-2xl">
+    <div class={card}><p class="text-sm text-neutral-500">Este mes</p><p class="mt-1 text-xl font-bold tabular-nums">{formatPrice(Number(stats.month))}</p></div>
+    <div class={card}><p class="text-sm text-neutral-500">Últimos 90 días</p><p class="mt-1 text-xl font-bold tabular-nums">{formatPrice(Number(stats.last90))}</p></div>
+    <div class={card}><p class="text-sm text-neutral-500">Compras</p><p class="mt-1 text-xl font-bold tabular-nums">{Number(stats.n)}</p></div>
+  </div>
+
+  <div class="mt-6 grid gap-6 lg:grid-cols-5">
+    <section class:list={[card, 'lg:col-span-3']} aria-labelledby="nueva-compra">
+      <h2 id="nueva-compra" class="font-bold">Nueva compra</h2>
+      {error && <p class="mt-3 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert">{error}</p>}
+      <form method="POST" id="purchase-form" class="mt-4 space-y-4">
+        <input type="hidden" name="_action" value="create" />
+        <input type="hidden" name="items" id="purchase-items" value="[]" />
+        <div class="grid gap-4 sm:grid-cols-3">
+          <div class="sm:col-span-2">
+            <label for="supplier" class={label}>Proveedor *</label>
+            <input id="supplier" name="supplier" required list="suppliers-list" class={input} placeholder="Ej: Distribuidora Asunción" />
+            <datalist id="suppliers-list">{suppliers.map((s) => <option value={s.name} />)}</datalist>
+          </div>
+          <div>
+            <label for="purchase_date" class={label}>Fecha</label>
+            <input id="purchase_date" name="purchase_date" type="date" value={today} max={today} required class={input} />
+          </div>
+          <div>
+            <label for="invoice_number" class={label}>Nº de factura</label>
+            <input id="invoice_number" name="invoice_number" class={input} placeholder="001-001-0001234" />
+          </div>
+          <label class="flex items-center gap-2 self-end pb-2.5 text-sm text-neutral-600 sm:col-span-2">
+            <input type="checkbox" name="with_invoice" value="1" checked class="accent-neutral-900" />
+            Con factura legal (cuenta como IVA crédito)
+          </label>
+        </div>
+
+        <div class="rounded-xl border border-neutral-200 p-3">
+          <div class="grid gap-2 sm:grid-cols-[1fr_5rem_8rem_auto]">
+            <label class="sr-only" for="pi-product">Producto</label>
+            <select id="pi-product" class={input}>
+              {products.map((p) => <option value={p.id}>{p.name} — stock {p.stock}</option>)}
+            </select>
+            <label class="sr-only" for="pi-qty">Cantidad</label>
+            <input id="pi-qty" type="number" min="1" value="1" class={input} placeholder="Cant." />
+            <label class="sr-only" for="pi-cost">Costo unitario</label>
+            <input id="pi-cost" type="number" min="0" step="1" class={input} placeholder="Costo unit." />
+            <button type="button" id="pi-add" class="cursor-pointer rounded-xl bg-neutral-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-neutral-700">Agregar</button>
+          </div>
+          <ul id="pi-list" class="mt-3 divide-y divide-neutral-100 text-sm"></ul>
+          <p id="pi-empty" class="mt-3 text-center text-sm text-neutral-400">Agregá los productos que entraron.</p>
+        </div>
+
+        <div>
+          <label for="notes" class={label}>Notas</label>
+          <input id="notes" name="notes" class={input} placeholder="Opcional" />
+        </div>
+        <div class="flex items-center justify-between gap-4">
+          <p class="text-sm text-neutral-500">Total: <span id="pi-total" class="text-lg font-bold text-neutral-900">Gs. 0</span></p>
+          <button type="submit" id="pi-submit" disabled class="cursor-pointer rounded-xl bg-neutral-900 px-6 py-2.5 text-sm font-semibold text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-40">
+            Registrar compra
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <section class:list={[card, 'lg:col-span-2']} aria-labelledby="proveedores">
+      <h2 id="proveedores" class="font-bold">Proveedores</h2>
+      {suppliers.length === 0 ? (
+        <p class="mt-3 text-sm text-neutral-500">Aparecen al registrar la primera compra.</p>
+      ) : (
+        <ul class="mt-3 divide-y divide-neutral-100 text-sm">
+          {suppliers.map((s) => (
+            <li class="flex items-center gap-3 py-2">
+              <div class="min-w-0 flex-1">
+                <p class="truncate font-medium">{s.name}</p>
+                <p class="text-xs text-neutral-500">{s.n} {s.n === 1 ? 'compra' : 'compras'} · última {s.last}</p>
+              </div>
+              <span class="font-semibold tabular-nums">{formatPrice(s.total)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  </div>
+
+  <section class="mt-8" aria-labelledby="historial">
+    <h2 id="historial" class="text-xs font-semibold tracking-wide text-neutral-500 uppercase">Últimas compras</h2>
+    {purchases.length === 0 ? (
+      <p class="mt-3 rounded-2xl border border-dashed border-neutral-300 bg-white p-10 text-center text-sm text-neutral-500">Todavía no hay compras registradas.</p>
+    ) : (
+      <div class="mt-3 space-y-3">
+        {purchases.map((p) => (
+          <article id={`compra-${p.id}`} class={card}>
+            <header class="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <p class="font-semibold">#{p.id} · {p.supplier}</p>
+              <p class="text-sm text-neutral-500">{p.purchase_date}</p>
+              {p.invoice_number && <p class="text-xs text-neutral-500">Factura {p.invoice_number}</p>}
+              {!p.with_invoice && <span class="rounded bg-amber-50 px-1.5 text-xs text-amber-700">sin factura</span>}
+              <p class="ml-auto font-bold tabular-nums">{formatPrice(p.total)}</p>
+            </header>
+            <ul class="mt-2 text-sm text-neutral-600">
+              {(itemsByPurchase.get(p.id) ?? []).map((it) => (
+                <li class="flex justify-between gap-3 py-0.5"><span>{it.product_name} × {it.qty}</span><span class="tabular-nums">{formatPrice(it.unit_cost)} c/u</span></li>
+              ))}
+            </ul>
+            <footer class="mt-2 flex items-center justify-between text-xs text-neutral-400">
+              <span>Cargó {p.user_name}{p.notes && ` · ${p.notes}`}</span>
+              <form method="POST" onsubmit={`return confirm('¿Anular la compra #${p.id}? Se resta el stock que había ingresado.')`}>
+                <input type="hidden" name="_action" value="void" />
+                <input type="hidden" name="id" value={p.id} />
+                <button type="submit" class="cursor-pointer font-semibold text-rose-600 hover:underline">Anular</button>
+              </form>
+            </footer>
+          </article>
+        ))}
+      </div>
+    )}
+  </section>
+
+  <script is:inline define:vars={{ products }}>
+    (() => {
+      const byId = new Map(products.map((p) => [p.id, p]));
+      const items = [];
+      const fmt = new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', maximumFractionDigits: 0 });
+      const select = document.getElementById('pi-product');
+      const qty = document.getElementById('pi-qty');
+      const cost = document.getElementById('pi-cost');
+      const list = document.getElementById('pi-list');
+      const empty = document.getElementById('pi-empty');
+      const totalEl = document.getElementById('pi-total');
+      const field = document.getElementById('purchase-items');
+      const submit = document.getElementById('pi-submit');
+
+      // Sugerir el costo actual del producto elegido
+      const suggest = () => {
+        const p = byId.get(Number(select.value));
+        cost.value = p && p.cost > 0 ? String(p.cost) : '';
+      };
+      select.addEventListener('change', suggest);
+      suggest();
+
+      function render() {
+        list.innerHTML = '';
+        let total = 0;
+        items.forEach((it, idx) => {
+          const p = byId.get(it.id);
+          total += it.qty * it.cost;
+          const li = document.createElement('li');
+          li.className = 'flex items-center gap-3 py-2';
+          const name = document.createElement('span');
+          name.className = 'min-w-0 flex-1 truncate';
+          name.textContent = `${p.name} × ${it.qty}`;
+          const sub = document.createElement('span');
+          sub.className = 'tabular-nums';
+          sub.textContent = `${fmt.format(it.cost)} c/u · ${fmt.format(it.qty * it.cost)}`;
+          const del = document.createElement('button');
+          del.type = 'button';
+          del.className = 'cursor-pointer px-1 text-rose-600';
+          del.setAttribute('aria-label', `Quitar ${p.name}`);
+          del.textContent = '×';
+          del.addEventListener('click', () => { items.splice(idx, 1); render(); });
+          li.append(name, sub, del);
+          list.appendChild(li);
+        });
+        empty.hidden = items.length > 0;
+        totalEl.textContent = fmt.format(total);
+        field.value = JSON.stringify(items);
+        submit.disabled = items.length === 0;
+      }
+
+      document.getElementById('pi-add').addEventListener('click', () => {
+        const id = Number(select.value);
+        const q = Math.floor(Number(qty.value));
+        const c = Number(cost.value);
+        if (!byId.get(id) || !(q > 0) || !(c >= 0) || cost.value === '') {
+          alert('Completá cantidad y costo unitario.');
+          return;
+        }
+        const found = items.find((i) => i.id === id && i.cost === c);
+        if (found) found.qty += q;
+        else items.push({ id, qty: q, cost: c });
+        qty.value = '1';
+        render();
+      });
+      render();
+    })();
+  </script>
+</AdminLayout>
